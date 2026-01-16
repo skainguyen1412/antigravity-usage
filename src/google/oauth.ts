@@ -22,6 +22,19 @@ const OAUTH_CONFIG = {
   ]
 }
 
+// Cloud Code API configuration
+const CLOUDCODE_CONFIG = {
+  baseUrl: 'https://cloudcode-pa.googleapis.com',
+  userAgent: 'antigravity',
+  metadata: {
+    ideType: 'ANTIGRAVITY',
+    platform: 'PLATFORM_UNSPECIFIED',
+    pluginType: 'GEMINI'
+  },
+  onboardAttempts: 5,
+  onboardDelayMs: 2000
+}
+
 interface OAuthOptions {
   noBrowser?: boolean
   port?: number
@@ -31,6 +44,28 @@ interface OAuthResult {
   success: boolean
   email?: string
   error?: string
+}
+
+/**
+ * Response types for Cloud Code API
+ */
+interface LoadCodeAssistResponse {
+  cloudaicompanionProject?: string | { id?: string }
+  paidTier?: { id?: string }
+  currentTier?: { id?: string }
+  allowedTiers?: Array<{ id?: string; isDefault?: boolean }>
+}
+
+interface OnboardUserResponse {
+  done?: boolean
+  response?: {
+    cloudaicompanionProject?: string | { id?: string }
+  }
+}
+
+interface ProjectIdResult {
+  projectId?: string
+  tierId?: string
 }
 
 /**
@@ -117,35 +152,185 @@ async function getUserEmail(accessToken: string): Promise<string | undefined> {
 }
 
 /**
- * Fetch project ID from Cloud Code API during login
- * This is cached with tokens for efficiency during quota fetches
+ * Extract project ID from cloudaicompanionProject field
+ * Handles both string and object { id: string } formats
  */
-async function fetchProjectId(accessToken: string): Promise<string | undefined> {
-  debug('oauth', 'Fetching project ID from Cloud Code API')
+export function extractProjectId(value: unknown): string | undefined {
+  // Case 1: Non-empty string
+  if (typeof value === 'string' && value.length > 0) {
+    return value
+  }
+  
+  // Case 2: Object with 'id' property that is a non-empty string
+  if (value && typeof value === 'object' && 'id' in value) {
+    const id = (value as { id?: unknown }).id
+    if (typeof id === 'string' && id.length > 0) {
+      return id
+    }
+  }
+  
+  // Case 3: Missing or invalid
+  return undefined
+}
+
+/**
+ * Pick the tier ID to use for onboarding
+ * Priority: default tier from allowedTiers > first tier from allowedTiers > 'LEGACY' > tierIdFromLoad
+ */
+export function pickOnboardTier(
+  allowedTiers: Array<{ id?: string; isDefault?: boolean }> | undefined,
+  tierIdFromLoad?: string
+): string | undefined {
+  if (!allowedTiers || allowedTiers.length === 0) {
+    return tierIdFromLoad
+  }
+  
+  // Find default tier
+  const defaultTier = allowedTiers.find(t => t.isDefault === true && t.id && t.id.length > 0)
+  if (defaultTier?.id) {
+    return defaultTier.id
+  }
+  
+  // Find first tier with valid ID
+  const firstTier = allowedTiers.find(t => t.id && t.id.length > 0)
+  if (firstTier?.id) {
+    return firstTier.id
+  }
+  
+  // If tiers exist but have no IDs, use LEGACY
+  if (allowedTiers.length > 0) {
+    return 'LEGACY'
+  }
+  
+  return tierIdFromLoad
+}
+
+/**
+ * Sleep helper for retry delays
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * Try to onboard user with retry logic
+ * Calls onboardUser endpoint until done=true or max attempts reached
+ */
+async function tryOnboardUser(accessToken: string, tierId: string): Promise<string | undefined> {
+  debug('oauth', `Starting onboard flow with tierId: ${tierId}`)
+  
+  const payload = {
+    tierId,
+    metadata: CLOUDCODE_CONFIG.metadata
+  }
+  
+  for (let attempt = 1; attempt <= CLOUDCODE_CONFIG.onboardAttempts; attempt++) {
+    debug('oauth', `Onboard attempt ${attempt}/${CLOUDCODE_CONFIG.onboardAttempts}`)
+    
+    try {
+      const response = await fetch(`${CLOUDCODE_CONFIG.baseUrl}/v1internal:onboardUser`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'User-Agent': CLOUDCODE_CONFIG.userAgent
+        },
+        body: JSON.stringify(payload)
+      })
+      
+      if (!response.ok) {
+        debug('oauth', `Onboard request failed: ${response.status}`)
+        // Don't retry on 403/401 - these are permanent failures
+        if (response.status === 401 || response.status === 403) {
+          debug('oauth', 'Onboarding forbidden or unauthorized, stopping retries')
+          return undefined
+        }
+      } else {
+        const data = await response.json() as OnboardUserResponse
+        debug('oauth', `Onboard response: done=${data.done}`)
+        
+        if (data.done === true) {
+          const projectId = extractProjectId(data.response?.cloudaicompanionProject)
+          if (projectId) {
+            debug('oauth', `Onboarding complete, projectId: ${projectId}`)
+            return projectId
+          }
+          debug('oauth', 'Onboarding done but no projectId in response')
+          return undefined
+        }
+      }
+    } catch (err) {
+      debug('oauth', `Onboard attempt ${attempt} error:`, err)
+    }
+    
+    // Wait before next attempt (unless this is the last attempt)
+    if (attempt < CLOUDCODE_CONFIG.onboardAttempts) {
+      debug('oauth', `Waiting ${CLOUDCODE_CONFIG.onboardDelayMs}ms before next attempt`)
+      await sleep(CLOUDCODE_CONFIG.onboardDelayMs)
+    }
+  }
+  
+  debug('oauth', 'Onboarding attempts exhausted')
+  return undefined
+}
+
+/**
+ * Resolve project ID from Cloud Code API
+ * First tries loadCodeAssist, if no projectId then initiates onboarding
+ */
+export async function resolveProjectId(accessToken: string): Promise<ProjectIdResult> {
+  debug('oauth', 'Resolving project ID from Cloud Code API')
   
   try {
-    const response = await fetch('https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist', {
+    // Step 1: Call loadCodeAssist
+    const response = await fetch(`${CLOUDCODE_CONFIG.baseUrl}/v1internal:loadCodeAssist`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'antigravity/1.11.3 Darwin/arm64'
+        'User-Agent': CLOUDCODE_CONFIG.userAgent
       },
-      body: JSON.stringify({ metadata: { ideType: 'ANTIGRAVITY' } })
+      body: JSON.stringify({ metadata: CLOUDCODE_CONFIG.metadata })
     })
     
-    if (response.ok) {
-      const data = await response.json() as { cloudaicompanionProject?: string }
-      debug('oauth', `Got project ID: ${data.cloudaicompanionProject}`)
-      return data.cloudaicompanionProject
+    if (!response.ok) {
+      debug('oauth', `loadCodeAssist failed: ${response.status}`)
+      return { projectId: undefined, tierId: undefined }
     }
     
-    debug('oauth', `Failed to get project ID: ${response.status}`)
+    const data = await response.json() as LoadCodeAssistResponse
+    
+    // Step 2: Extract project ID and tier
+    const projectId = extractProjectId(data.cloudaicompanionProject)
+    const tierId = data.paidTier?.id || data.currentTier?.id
+    
+    // Step 3: If we have projectId, return immediately
+    if (projectId) {
+      debug('oauth', `Got projectId from loadCodeAssist: ${projectId}`)
+      return { projectId, tierId }
+    }
+    
+    // Step 4: No projectId - need to onboard
+    debug('oauth', 'No projectId in loadCodeAssist response, initiating onboarding')
+    
+    const onboardTier = pickOnboardTier(data.allowedTiers, tierId)
+    
+    if (!onboardTier) {
+      debug('oauth', 'Cannot determine tier for onboarding')
+      return { projectId: undefined, tierId }
+    }
+    
+    // Step 5: Try onboarding
+    const onboardedProjectId = await tryOnboardUser(accessToken, onboardTier)
+    
+    return {
+      projectId: onboardedProjectId,
+      tierId: onboardTier
+    }
   } catch (err) {
-    debug('oauth', 'Error fetching project ID', err)
+    debug('oauth', 'Error resolving project ID', err)
+    return { projectId: undefined, tierId: undefined }
   }
-  
-  return undefined
 }
 
 /**
@@ -209,12 +394,18 @@ export async function startOAuthFlow(options: OAuthOptions = {}): Promise<OAuthR
           // Get user email
           const email = await getUserEmail(tokenResponse.access_token)
           
-          // Get project ID from Cloud Code API (for efficiency during quota fetches)
+          // Resolve project ID from Cloud Code API (may trigger onboarding if needed)
           let projectId: string | undefined
           try {
-            projectId = await fetchProjectId(tokenResponse.access_token)
+            const projectResult = await resolveProjectId(tokenResponse.access_token)
+            projectId = projectResult.projectId
+            if (projectId) {
+              debug('oauth', `Project ID resolved: ${projectId}`)
+            } else {
+              debug('oauth', 'No project ID obtained (will fetch on demand)')
+            }
           } catch (err) {
-            debug('oauth', 'Failed to fetch project ID during login (will fetch on demand)', err)
+            debug('oauth', 'Failed to resolve project ID during login (will fetch on demand)', err)
             // Continue without project ID - it will be fetched on demand
           }
           

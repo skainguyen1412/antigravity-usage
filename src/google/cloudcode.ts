@@ -7,7 +7,14 @@ import { APIError, AuthenticationError, NetworkError, RateLimitError } from '../
 import type { TokenManager } from './token-manager.js'
 
 const BASE_URL = 'https://cloudcode-pa.googleapis.com'
-const USER_AGENT = 'antigravity/1.11.3 Darwin/arm64'
+const USER_AGENT = 'antigravity'
+
+// Standard metadata for Cloud Code API calls
+const METADATA = {
+  ideType: 'ANTIGRAVITY',
+  platform: 'PLATFORM_UNSPECIFIED',
+  pluginType: 'GEMINI'
+}
 
 /**
  * Raw API response types (based on extension code patterns)
@@ -19,12 +26,16 @@ export interface LoadCodeAssistResponse {
     planType?: string
   }
   availablePromptCredits?: number
-  cloudaicompanionProject?: string
+  cloudaicompanionProject?: string | { id?: string }
   currentTier?: {
     id?: string
     name?: string
     description?: string
   }
+  paidTier?: {
+    id?: string
+  }
+  allowedTiers?: Array<{ id?: string; isDefault?: boolean }>
 }
 
 /**
@@ -130,12 +141,17 @@ export class CloudCodeClient {
    */
   async loadCodeAssist(): Promise<LoadCodeAssistResponse> {
     const response = await this.request<LoadCodeAssistResponse>('/v1internal:loadCodeAssist', {
-      metadata: { ideType: 'ANTIGRAVITY' }
+      metadata: METADATA
     })
     
     // Store project ID for fetchAvailableModels
+    // Handle both string and object formats
     if (response.cloudaicompanionProject) {
-      this.projectId = response.cloudaicompanionProject
+      if (typeof response.cloudaicompanionProject === 'string') {
+        this.projectId = response.cloudaicompanionProject
+      } else if (response.cloudaicompanionProject.id) {
+        this.projectId = response.cloudaicompanionProject.id
+      }
       debug('cloudcode', `Project ID: ${this.projectId}`)
     }
     
