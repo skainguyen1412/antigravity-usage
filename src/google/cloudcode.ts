@@ -7,7 +7,14 @@ import { APIError, AuthenticationError, NetworkError, RateLimitError } from '../
 import type { TokenManager } from './token-manager.js'
 
 const BASE_URL = 'https://cloudcode-pa.googleapis.com'
-const USER_AGENT = 'antigravity/1.11.3 Darwin/arm64'
+const USER_AGENT = 'antigravity'
+
+// Standard metadata for Cloud Code API calls
+const METADATA = {
+  ideType: 'ANTIGRAVITY',
+  platform: 'PLATFORM_UNSPECIFIED',
+  pluginType: 'GEMINI'
+}
 
 /**
  * Raw API response types (based on extension code patterns)
@@ -19,24 +26,16 @@ export interface LoadCodeAssistResponse {
     planType?: string
   }
   availablePromptCredits?: number
-  cloudaicompanionProject?: string
+  cloudaicompanionProject?: string | { id?: string }
   currentTier?: {
     id?: string
     name?: string
     description?: string
   }
-  allowedTiers?: Array<{
-    id?: string
-    name?: string
-    description?: string
-    isDefault?: boolean
-    userDefinedCloudaicompanionProject?: boolean
-  }>
   paidTier?: {
     id?: string
-    name?: string
-    description?: string
   }
+  allowedTiers?: Array<{ id?: string; isDefault?: boolean }>
 }
 
 /**
@@ -146,18 +145,19 @@ export class CloudCodeClient {
   async loadCodeAssist(): Promise<LoadCodeAssistResponse> {
     // Use complete metadata as per working implementation
     const response = await this.request<LoadCodeAssistResponse>('/v1internal:loadCodeAssist', {
-      metadata: { 
-        ideType: 'ANTIGRAVITY',
-        platform: 'PLATFORM_UNSPECIFIED',
-        pluginType: 'GEMINI'
-      }
+      metadata: METADATA
     })
     
-    // Debug: log full response to see all fields
-    debug('cloudcode', 'loadCodeAssist response:', JSON.stringify(response, null, 2))
-    
-    // Extract project ID
-    this.extractProjectId(response)
+    // Store project ID for fetchAvailableModels
+    // Handle both string and object formats
+    if (response.cloudaicompanionProject) {
+      if (typeof response.cloudaicompanionProject === 'string') {
+        this.projectId = response.cloudaicompanionProject
+      } else if (response.cloudaicompanionProject.id) {
+        this.projectId = response.cloudaicompanionProject.id
+      }
+      debug('cloudcode', `Project ID: ${this.projectId}`)
+    }
     
     return response
   }
