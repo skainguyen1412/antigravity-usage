@@ -65,13 +65,23 @@ export async function executeTrigger(options: TriggerOptions): Promise<TriggerRe
   try {
     await tokenManager.getValidAccessToken()
   } catch (err) {
+    // Extract detailed error message for better diagnostics
+    let errorMessage = `Authentication failed for ${accountEmail}`
+    
+    if (err && typeof err === 'object' && 'getDetailedMessage' in err) {
+      // TokenRefreshError with detailed message
+      errorMessage = (err as { getDetailedMessage: () => string }).getDetailedMessage()
+    } else if (err instanceof Error) {
+      errorMessage = `Token refresh failed: ${err.message}`
+    }
+    
     debug('trigger-service', `Failed to refresh token for ${accountEmail}:`, err)
     
     const results: ModelTriggerResult[] = models.map(modelId => ({
       modelId,
       success: false,
       durationMs: 0,
-      error: `Authentication failed for ${accountEmail}`
+      error: errorMessage
     }))
     
     recordResults(results, options)

@@ -44,9 +44,39 @@ export class APIError extends Error {
 }
 
 export class TokenRefreshError extends Error {
-  constructor(message = 'Failed to refresh token. Please login again.') {
+  /** Original error that caused the refresh failure */
+  cause?: Error
+  /** HTTP status code if available */
+  statusCode?: number
+  /** Whether the error is retryable (network issues) vs permanent (invalid token) */
+  isRetryable: boolean
+  
+  constructor(
+    message = 'Failed to refresh token. Please login again.',
+    options?: {
+      cause?: Error
+      statusCode?: number
+      isRetryable?: boolean
+    }
+  ) {
     super(message)
     this.name = 'TokenRefreshError'
+    this.cause = options?.cause
+    this.statusCode = options?.statusCode
+    // Default: retryable unless we get a 400/401 (invalid_grant, etc.)
+    this.isRetryable = options?.isRetryable ?? true
+  }
+  
+  /** Get detailed error message including cause */
+  getDetailedMessage(): string {
+    let msg = this.message
+    if (this.statusCode) {
+      msg += ` (HTTP ${this.statusCode})`
+    }
+    if (this.cause) {
+      msg += `: ${this.cause.message}`
+    }
+    return msg
   }
 }
 

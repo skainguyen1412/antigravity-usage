@@ -6,6 +6,7 @@ import { debug } from '../core/logger.js'
 import { getTokenManager } from '../google/token-manager.js'
 import { CloudCodeClient, type FetchAvailableModelsResponse } from '../google/cloudcode.js'
 import { parseQuotaSnapshot } from '../google/parser.js'
+import { extractProjectId } from '../google/oauth.js'
 import { 
   detectAntigravityProcess, 
   discoverPorts, 
@@ -67,8 +68,11 @@ async function fetchQuotaGoogle(): Promise<QuotaSnapshot> {
   
   // Save project ID to token storage for future use (for triggers, etc.)
   if (codeAssistResponse?.cloudaicompanionProject) {
-    tokenManager.setProjectId(codeAssistResponse.cloudaicompanionProject)
-    debug('service', `Project ID saved: ${codeAssistResponse.cloudaicompanionProject}`)
+    const projectId = extractProjectId(codeAssistResponse.cloudaicompanionProject)
+    if (projectId) {
+      tokenManager.setProjectId(projectId)
+      debug('service', `Project ID saved: ${projectId}`)
+    }
   }
   
   // Try to fetch models, but it might fail with 403
