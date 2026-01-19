@@ -110,6 +110,7 @@ Alias for `quota`. Fetches and displays usage data.
 antigravity-usage                  # Auto-detect (Local -> Cloud)
 antigravity-usage --all            # Fetch ALL accounts
 antigravity-usage --method local   # Force local IDE connection
+antigravity-usage --method google   # Force google IDE connection
 antigravity-usage --json           # Output JSON for scripts
 ```
 
@@ -129,23 +130,67 @@ Troubleshoot issues with your setup. Checks env vars, auth status, and local ser
 ### `antigravity-usage status`
 Quickly check if your auth tokens are valid or expired.
 
-### `antigravity-usage wakeup`
-Auto wake-up and warm up AI models to optimize quota usage.
+### `antigravity-usage wakeup` 🚀
+**Never waste quota again.** Automatically wake up your AI models at strategic times to maximize your daily limits.
 
 ```bash
-antigravity-usage wakeup config     # Configure schedule interactively
-antigravity-usage wakeup install    # Install to system cron
-antigravity-usage wakeup uninstall  # Remove from cron
-antigravity-usage wakeup test       # Manual test trigger
+antigravity-usage wakeup config     # Interactive setup (takes 30 seconds)
+antigravity-usage wakeup install    # Install to native system cron
+antigravity-usage wakeup status     # Check configuration & next run
+antigravity-usage wakeup test       # Test trigger manually
 antigravity-usage wakeup history    # View trigger history
-antigravity-usage wakeup status     # Show current status
 ```
 
-**Features:**
-- 🕐 **Schedule-based**: Run at specific times (interval, daily, or cron)
-- 🔄 **Quota-reset-based**: Auto-trigger when quota resets
-- 👥 **Multi-account**: Trigger for multiple accounts
-- 🛡️ **Deduplication**: Cooldown prevents duplicate triggers
+**Why This Matters:**
+Your Antigravity quota resets every ~5 hours, but if you don't use it, you lose it. The wakeup feature ensures you **automatically trigger** both Claude and Gemini models to keep your quota flowing.
+
+#### 🎯 Intelligent Model Selection
+Zero configuration needed. Automatically wakes up:
+- **`claude-sonnet-4-5`** → Triggers the entire Claude family
+- **`gemini-3-flash`** → Triggers the entire Gemini family
+
+Both models combined ensure comprehensive coverage and optimal quota utilization across all available AI models.
+
+#### ⚡️ Two Powerful Trigger Modes
+
+**1. Schedule-Based** (Native Cron Integration)
+Runs locally on your machine with zero dependencies:
+- **Interval Mode**: Every N hours (e.g., every 6 hours)
+- **Daily Mode**: At specific times (e.g., 9 AM, 5 PM)
+- **Custom Mode**: Advanced cron expressions for power users
+
+```bash
+antigravity-usage wakeup install
+# ✅ Installs to your system's native crontab
+# ✅ Runs even when terminal/antigravity is closed
+# ✅ Persists across reboots
+```
+
+**2. Smart Quota-Reset Detection** (Zero-Waste Mode)
+The most intelligent trigger mode. Automatically detects when:
+- Quota is at **100%** (unused)
+- Reset time is **~5 hours away** (just reset)
+- No cooldown conflicts
+
+When triggered, it wakes up **ALL** your accounts simultaneously, ensuring none of your quota goes to waste.
+
+#### 🛡️ Built-in Safety Features
+- **Cooldown Protection**: Prevents duplicate triggers (1-hour default)
+- **Multi-Account Support**: Trigger for specific accounts or all at once
+- **Detailed History**: Track every trigger with timestamps and results
+- **Graceful Failures**: Automatic retry logic with exponential backoff
+- **Token Efficiency**: Minimal output tokens (just 1 token per request)
+
+#### 📊 Real-Time Monitoring
+```bash
+antigravity-usage wakeup status
+```
+Shows:
+- ✅ Enabled/disabled status
+- 📅 Next scheduled run time
+- 🎯 Selected models and accounts
+- 📝 Last trigger result
+- ⚙️ Cron installation status
 
 ## Configuration
 Data is stored in your system's standard config location:
