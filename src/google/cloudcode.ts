@@ -6,8 +6,20 @@ import { debug } from '../core/logger.js'
 import { APIError, AuthenticationError, NetworkError, RateLimitError } from '../core/errors.js'
 import type { TokenManager } from './token-manager.js'
 
-const BASE_URL = 'https://cloudcode-pa.googleapis.com'
+// Base URLs - try production first, then sandbox (matching example.ts)
+const BASE_URLS = [
+  'https://cloudcode-pa.googleapis.com',
+  'https://daily-cloudcode-pa.sandbox.googleapis.com'
+]
+const BASE_URL = BASE_URLS[0]  // Default for non-trigger API calls
 const USER_AGENT = 'antigravity'
+
+// Retry configuration (matching example.ts)
+const MAX_TRIGGER_ATTEMPTS = 3
+const STREAM_PATH = '/v1internal:streamGenerateContent?alt=sse'
+
+// System prompt - MUST match exact Cockpit extension format
+const SYSTEM_PROMPT = 'You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding. You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**'
 
 // Standard metadata for Cloud Code API calls
 const METADATA = {
@@ -71,7 +83,10 @@ export interface FetchAvailableModelsResponse {
 export class CloudCodeClient {
   private projectId?: string
   
-  constructor(private tokenManager: TokenManager) {}
+  constructor(private tokenManager: TokenManager) {
+    // Initialize project ID from cached tokens (stored during login/quota fetch)
+    this.projectId = tokenManager.getProjectId()
+  }
   
   /**
    * Make an authenticated API request
@@ -140,6 +155,7 @@ export class CloudCodeClient {
    * Also extracts project ID for subsequent calls
    */
   async loadCodeAssist(): Promise<LoadCodeAssistResponse> {
+    // Use complete metadata as per working implementation
     const response = await this.request<LoadCodeAssistResponse>('/v1internal:loadCodeAssist', {
       metadata: METADATA
     })
@@ -159,11 +175,302 @@ export class CloudCodeClient {
   }
   
   /**
+   * Extract project ID from loadCodeAssist response
+   */
+  private extractProjectId(response: LoadCodeAssistResponse): void {
+    // Try multiple possible field names
+    const projectId = response.cloudaicompanionProject 
+      || (response as any).project 
+      || (response as any).projectId
+      || (response as any).cloudProject
+    
+    if (projectId && typeof projectId === 'string' && projectId.length > 0) {
+      this.projectId = projectId
+      debug('cloudcode', `Project ID extracted: ${this.projectId}`)
+    } else {
+      debug('cloudcode', 'No project ID found in response')
+    }
+  }
+  
+  /**
+   * Resolve project ID with onboarding retry if needed
+   * This is the recommended way to get projectId reliably
+   */
+  async resolveProjectId(maxRetries: number = 5, retryDelayMs: number = 2000): Promise<string | undefined> {
+    // If already have projectId, return it
+    if (this.projectId) {
+      debug('cloudcode', `Using cached project ID: ${this.projectId}`)
+      return this.projectId
+    }
+    
+    // Try loading first
+    const loadResponse = await this.loadCodeAssist()
+    if (this.projectId) {
+      return this.projectId
+    }
+    
+    // Project ID not found - may need onboarding
+    debug('cloudcode', 'Project ID not found, attempting onboarding...')
+    
+    // Pick onboarding tier from allowedTiers
+    const tiers = loadResponse.allowedTiers || []
+    let tierId: string | undefined
+    
+    // Prefer default tier, then paidTier, then first available
+    const defaultTier = tiers.find((t: any) => t.isDefault)
+    if (defaultTier) {
+      tierId = defaultTier.id
+    } else if (loadResponse.paidTier?.id) {
+      tierId = loadResponse.paidTier.id
+    } else if ((loadResponse as any).currentTier?.id) {
+      tierId = (loadResponse as any).currentTier.id
+    } else if (tiers.length > 0) {
+      tierId = tiers[0].id
+    }
+    
+    if (!tierId) {
+      debug('cloudcode', 'No tier available for onboarding')
+      return undefined
+    }
+    
+    debug('cloudcode', `Onboarding with tier: ${tierId}`)
+    
+    // Try onboarding (call to select/confirm tier)
+    try {
+      await this.request('/v1internal:onboardUser', {
+        tierId,
+        metadata: { 
+          ideType: 'ANTIGRAVITY',
+          platform: 'PLATFORM_UNSPECIFIED',
+          pluginType: 'GEMINI'
+        }
+      })
+    } catch (err) {
+      debug('cloudcode', 'Onboarding call failed (may be expected):', err)
+      // Continue with retry loop anyway
+    }
+    
+    // Retry loop to get project ID
+    for (let i = 0; i < maxRetries; i++) {
+      debug('cloudcode', `Retry ${i + 1}/${maxRetries} for project ID...`)
+      
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs))
+      
+      // Try loading again
+      await this.loadCodeAssist()
+      
+      if (this.projectId) {
+        debug('cloudcode', `Project ID resolved after ${i + 1} retries: ${this.projectId}`)
+        return this.projectId
+      }
+    }
+    
+    debug('cloudcode', 'Failed to resolve project ID after all retries')
+    return undefined
+  }
+  
+  /**
    * Fetch available models with quota info
    * Requires project ID from loadCodeAssist
    */
   async fetchAvailableModels(): Promise<FetchAvailableModelsResponse> {
     const body = this.projectId ? { project: this.projectId } : {}
     return this.request<FetchAvailableModelsResponse>('/v1internal:fetchAvailableModels', body)
+  }
+  
+  /**
+   * Generate content using a specific model (Agent Request Format)
+   * Used for wake-up triggers to warm up models
+   * 
+   * Per docs/trigger.md, must use the agent request format with:
+   * - project: Cloud Code project ID
+   * - requestId: unique ID
+   * - model: model ID
+   * - userAgent: "antigravity"
+   * - requestType: "agent"
+   * - request: contains contents, session_id, systemInstruction, generationConfig
+   * 
+   * @param modelId Model ID to use
+   * @param prompt User prompt to send
+   * @param maxOutputTokens Maximum tokens to generate (0 = no limit)
+   * @returns Generated text and optional token usage
+   */
+  async generateContent(
+    modelId: string, 
+    prompt: string, 
+    maxOutputTokens?: number
+  ): Promise<{ text: string; tokensUsed?: { prompt: number; completion: number; total: number } }> {
+    debug('cloudcode', `Generating content with model: ${modelId}`)
+    debug('cloudcode', `Current projectId: ${this.projectId}`)
+    
+    // CRITICAL: Always warm up session with loadCodeAssist before trigger request
+    // This is required for the API to accept our requests (matching example.ts)
+    debug('cloudcode', 'Warming up session with loadCodeAssist...')
+    try {
+      await this.loadCodeAssist()
+      debug('cloudcode', `Session warmed up, projectId: ${this.projectId}`)
+    } catch (err) {
+      debug('cloudcode', 'Warmup failed (continuing anyway):', err)
+    }
+    
+    // Generate unique IDs
+    const requestId = crypto.randomUUID()
+    const sessionId = crypto.randomUUID()
+    
+    // System instruction - MUST match exact Cockpit extension format
+    const systemInstruction = {
+      parts: [{ text: SYSTEM_PROMPT }]
+    }
+    
+    // Generation config
+    const generationConfig: Record<string, unknown> = {
+      temperature: 0
+    }
+    if (maxOutputTokens && maxOutputTokens > 0) {
+      generationConfig.maxOutputTokens = maxOutputTokens
+    }
+    
+    // Build agent request body per docs/trigger.md
+    // Project may be optional if the API can infer it from the token
+    const body: Record<string, unknown> = {
+      requestId,
+      model: modelId,
+      userAgent: 'antigravity',
+      requestType: 'agent',
+      request: {
+        contents: [{
+          role: 'user',
+          parts: [{ text: prompt }]
+        }],
+        session_id: sessionId,
+        systemInstruction,
+        generationConfig
+      }
+    }
+    
+    // Add project only if we have one
+    if (this.projectId) {
+      body.project = this.projectId
+      debug('cloudcode', `Using project ID: ${this.projectId}`)
+    } else {
+      debug('cloudcode', 'Sending request WITHOUT project ID')
+    }
+    
+    debug('cloudcode', `Request body:`, JSON.stringify(body, null, 2))
+    
+    // Get fresh access token
+    const token = await this.tokenManager.getValidAccessToken()
+    
+    // Helper: Calculate backoff delay (matching example.ts)
+    const getBackoffDelay = (attempt: number): number => {
+      const raw = 500 * Math.pow(2, attempt - 2)
+      const jitter = Math.random() * 100
+      return Math.min(raw + jitter, 4000)
+    }
+    
+    // Helper: Sleep function
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+    
+    // Helper: Parse SSE response
+    const parseSSEResponse = (sseText: string): { text: string; tokensUsed?: { prompt: number; completion: number; total: number } } => {
+      let fullText = ''
+      let tokensUsed: { prompt: number; completion: number; total: number } | undefined
+      
+      for (const line of sseText.split('\n')) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.substring(6)
+          if (jsonStr.trim() === '[DONE]') continue
+          
+          try {
+            const data = JSON.parse(jsonStr)
+            const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text
+            if (candidateText) {
+              fullText += candidateText
+            }
+            if (data.usageMetadata) {
+              tokensUsed = {
+                prompt: data.usageMetadata.promptTokenCount || 0,
+                completion: data.usageMetadata.candidatesTokenCount || 0,
+                total: data.usageMetadata.totalTokenCount || 0
+              }
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+      
+      return { text: fullText, tokensUsed }
+    }
+    
+    // CRITICAL: Try each base URL with retries (matching example.ts EXACTLY)
+    for (const baseUrl of BASE_URLS) {
+      for (let attempt = 1; attempt <= MAX_TRIGGER_ATTEMPTS; attempt++) {
+        // Backoff BEFORE request (except first attempt) - matching example.ts
+        if (attempt > 1) {
+          const delay = getBackoffDelay(attempt)
+          debug('cloudcode', `Retry ${attempt}/${MAX_TRIGGER_ATTEMPTS} in ${Math.round(delay)}ms...`)
+          await sleep(delay)
+        }
+        
+        const url = `${baseUrl}${STREAM_PATH}`
+        debug('cloudcode', `Attempt ${attempt}/${MAX_TRIGGER_ATTEMPTS} on ${baseUrl}`)
+        
+        try {
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'User-Agent': USER_AGENT,
+              'Content-Type': 'application/json',
+              'Accept-Encoding': 'gzip'  // CRITICAL: Must match example.ts
+            },
+            body: JSON.stringify(body)
+          })
+          
+          const text = await response.text()
+          debug('cloudcode', `Response ${response.status}`)
+          debug('cloudcode', `Response text: ${text.slice(0, 500)}`)
+          
+          // Handle retryable errors (429 or 5xx) - matching example.ts
+          if (response.status === 429 || response.status >= 500) {
+            debug('cloudcode', `${response.status} - retryable`)
+            if (attempt === MAX_TRIGGER_ATTEMPTS) {
+              debug('cloudcode', 'Max attempts on this URL, trying next...')
+              break // Try next base URL
+            }
+            continue // Retry on same URL
+          }
+          
+          // Success!
+          if (response.ok) {
+            debug('cloudcode', 'Request succeeded!')
+            const parsed = parseSSEResponse(text)
+            debug('cloudcode', `Generated ${parsed.text.length} chars, tokens: ${parsed.tokensUsed?.total || 'unknown'}`)
+            return parsed
+          }
+          
+          // Non-retryable error (4xx except 429)
+          debug('cloudcode', `Non-retryable error: ${response.status}`)
+          throw new Error(`API request failed: ${response.status} - ${text}`)
+          
+        } catch (err) {
+          // Network or other error
+          if (err instanceof Error && !err.message.startsWith('API request failed')) {
+            debug('cloudcode', `Network error: ${err.message}`)
+            if (attempt === MAX_TRIGGER_ATTEMPTS) {
+              debug('cloudcode', 'Max attempts on this URL, trying next...')
+              break // Try next base URL
+            }
+            continue // Retry on same URL
+          }
+          throw err // Re-throw API errors
+        }
+      }
+    }
+    
+    // All URLs and retries exhausted
+    throw new Error('All trigger attempts failed across all base URLs')
   }
 }

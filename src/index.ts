@@ -109,5 +109,54 @@ program
   .description('Run diagnostics and show configuration')
   .action(doctorCommand)
 
+// Wakeup command with subcommands
+import { wakeupCommand } from './commands/wakeup.js'
+
+const wakeupCmd = program
+  .command('wakeup')
+  .description('Auto wake-up and warm up AI models')
+
+wakeupCmd
+  .command('config')
+  .description('Configure auto wake-up schedule')
+  .action(() => wakeupCommand('config', [], {}))
+
+wakeupCmd
+  .command('trigger')
+  .description('Execute one trigger cycle (called by cron)')
+  .option('--scheduled', 'Mark as scheduled trigger')
+  .action((options) => wakeupCommand('trigger', [], options))
+
+wakeupCmd
+  .command('install')
+  .description('Install wake-up schedule to system cron')
+  .action(() => wakeupCommand('install', [], {}))
+
+wakeupCmd
+  .command('uninstall')
+  .description('Remove wake-up schedule from system cron')
+  .action(() => wakeupCommand('uninstall', [], {}))
+
+wakeupCmd
+  .command('test')
+  .description('Test trigger manually')
+  .action(() => wakeupCommand('test', [], {}))
+
+wakeupCmd
+  .command('history')
+  .description('View trigger history')
+  .option('--limit <n>', 'Number of records to show', '10')
+  .option('--json', 'Output as JSON')
+  .action((options) => wakeupCommand('history', [], options))
+
+wakeupCmd
+  .command('status')
+  .description('Show wake-up status and configuration')
+  .action(() => wakeupCommand('status', [], {}))
+
+// Default action for wakeup command (show status)
+wakeupCmd.action(() => wakeupCommand('status', [], {}))
+
 // Parse and run
 program.parse()
+

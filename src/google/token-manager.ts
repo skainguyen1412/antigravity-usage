@@ -31,12 +31,20 @@ export class TokenManager {
   
   constructor(email?: string) {
     if (email) {
+      // Specific account requested
       this.accountEmail = email
       this.tokens = loadAccountTokens(email)
     } else {
       // Use active account
       this.accountEmail = getActiveAccountEmail()
-      this.tokens = loadTokens()
+      
+      // If we have an active account email, use account-specific storage
+      // Otherwise fall back to legacy default storage
+      if (this.accountEmail) {
+        this.tokens = loadAccountTokens(this.accountEmail)
+      } else {
+        this.tokens = loadTokens()
+      }
     }
   }
   
@@ -80,6 +88,24 @@ export class TokenManager {
   }
   
   /**
+   * Set and persist project ID
+   */
+  setProjectId(projectId: string): void {
+    if (!this.tokens) return
+    
+    this.tokens.projectId = projectId
+    
+    // Save to disk
+    if (this.accountEmail) {
+      saveAccountTokens(this.accountEmail, this.tokens)
+    } else {
+      saveTokens(this.tokens)
+    }
+    
+    debug('token-manager', `Project ID saved: ${projectId}`)
+  }
+  
+  /**
    * Check if token is expired or about to expire
    */
   isTokenExpired(): boolean {
@@ -107,39 +133,86 @@ export class TokenManager {
   }
   
   /**
-   * Refresh the access token
+   * Refresh the access token with retry logic
+   * Retries on transient network errors, fails immediately on permanent errors (invalid_grant)
    */
   async refreshToken(): Promise<void> {
     if (!this.tokens?.refreshToken) {
       throw new NotLoggedInError('No refresh token available. Please login again.')
     }
     
-    try {
-      debug('token-manager', 'Refreshing token...')
-      const response = await refreshAccessToken(this.tokens.refreshToken)
-      
-      // Update tokens
-      this.tokens = {
-        accessToken: response.access_token,
-        refreshToken: response.refresh_token || this.tokens.refreshToken,
-        expiresAt: Date.now() + response.expires_in * 1000,
-        email: this.tokens.email,
-        projectId: this.tokens.projectId
+    const MAX_RETRIES = 3
+    const BASE_DELAY_MS = 1000  // 1s, 2s, 4s exponential backoff
+    
+    let lastError: Error | undefined
+    
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        debug('token-manager', `Refreshing token (attempt ${attempt}/${MAX_RETRIES})...`)
+        const response = await refreshAccessToken(this.tokens.refreshToken)
+        
+        // Update tokens
+        this.tokens = {
+          accessToken: response.access_token,
+          refreshToken: response.refresh_token || this.tokens.refreshToken,
+          expiresAt: Date.now() + response.expires_in * 1000,
+          email: this.tokens.email,
+          projectId: this.tokens.projectId
+        }
+        
+        // Save to disk
+        if (this.accountEmail) {
+          saveAccountTokens(this.accountEmail, this.tokens)
+          updateLastUsed(this.accountEmail)
+        } else {
+          saveTokens(this.tokens)
+        }
+        
+        debug('token-manager', 'Token refreshed successfully')
+        return  // Success!
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err))
+        
+        // Check if this is a permanent error (don't retry)
+        const errorMessage = lastError.message.toLowerCase()
+        const isPermanentError = 
+          errorMessage.includes('invalid_grant') ||
+          errorMessage.includes('400') ||
+          errorMessage.includes('401') ||
+          errorMessage.includes('invalid_token') ||
+          errorMessage.includes('token has been revoked')
+        
+        if (isPermanentError) {
+          debug('token-manager', `Token refresh failed permanently: ${lastError.message}`)
+          throw new TokenRefreshError(
+            `Refresh token invalid or expired. Please login again.`,
+            { cause: lastError, isRetryable: false }
+          )
+        }
+        
+        // Transient error - retry with exponential backoff
+        if (attempt < MAX_RETRIES) {
+          const delayMs = BASE_DELAY_MS * Math.pow(2, attempt - 1)
+          debug('token-manager', `Token refresh attempt ${attempt} failed: ${lastError.message}. Retrying in ${delayMs}ms...`)
+          await this.sleep(delayMs)
+        } else {
+          debug('token-manager', `Token refresh failed after ${MAX_RETRIES} attempts: ${lastError.message}`)
+        }
       }
-      
-      // Save to disk
-      if (this.accountEmail) {
-        saveAccountTokens(this.accountEmail, this.tokens)
-        updateLastUsed(this.accountEmail)
-      } else {
-        saveTokens(this.tokens)
-      }
-      
-      debug('token-manager', 'Token refreshed successfully')
-    } catch (err) {
-      debug('token-manager', 'Token refresh failed', err)
-      throw new TokenRefreshError()
     }
+    
+    // All retries exhausted
+    throw new TokenRefreshError(
+      `Failed to refresh token after ${MAX_RETRIES} attempts`,
+      { cause: lastError, isRetryable: true }
+    )
+  }
+  
+  /**
+   * Sleep helper for retry delays
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
   }
   
   /**
