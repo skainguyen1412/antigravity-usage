@@ -5,6 +5,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { URL, URLSearchParams } from 'node:url'
 import open from 'open'
+import inquirer from 'inquirer'
 import { debug, info, error as logError } from '../core/logger.js'
 import { getAccountManager } from '../accounts/index.js'
 import type { OAuthTokenResponse, StoredTokens } from '../quota/types.js'
@@ -38,6 +39,7 @@ const CLOUDCODE_CONFIG = {
 interface OAuthOptions {
   noBrowser?: boolean
   port?: number
+  manual?: boolean
 }
 
 interface OAuthResult {
@@ -334,6 +336,48 @@ export async function resolveProjectId(accessToken: string): Promise<ProjectIdRe
 }
 
 /**
+ * Complete login process: exchange code for tokens, get user info, resolve project ID
+ */
+async function completeLogin(code: string, redirectUri: string): Promise<OAuthResult> {
+  // Exchange code for tokens
+  const tokenResponse = await exchangeCodeForTokens(code, redirectUri)
+  
+  // Get user email
+  const email = await getUserEmail(tokenResponse.access_token)
+  
+  // Resolve project ID from Cloud Code API (may trigger onboarding if needed)
+  let projectId: string | undefined
+  try {
+    const projectResult = await resolveProjectId(tokenResponse.access_token)
+    projectId = projectResult.projectId
+    if (projectId) {
+      debug('oauth', `Project ID resolved: ${projectId}`)
+    } else {
+      debug('oauth', 'No project ID obtained (will fetch on demand)')
+    }
+  } catch (err) {
+    debug('oauth', 'Failed to resolve project ID during login (will fetch on demand)', err)
+    // Continue without project ID - it will be fetched on demand
+  }
+  
+  // Save tokens using account manager
+  const tokens: StoredTokens = {
+    accessToken: tokenResponse.access_token,
+    refreshToken: tokenResponse.refresh_token || '',
+    expiresAt: Date.now() + tokenResponse.expires_in * 1000,
+    email,
+    projectId
+  }
+  
+  // Add/update account via account manager
+  if (email) {
+    getAccountManager().addAccount(tokens, email)
+  }
+  
+  return { success: true, email }
+}
+
+/**
  * Start OAuth login flow
  */
 export async function startOAuthFlow(options: OAuthOptions = {}): Promise<OAuthResult> {
@@ -355,6 +399,50 @@ export async function startOAuthFlow(options: OAuthOptions = {}): Promise<OAuthR
   })
   
   const authUrl = `${OAUTH_CONFIG.authUrl}?${authParams.toString()}`
+
+  // Manual flow check
+  if (options.manual) {
+    info('')
+    info('MANUAL LOGIN MODE')
+    info('1. Copy this URL and open it in your browser:')
+    info(authUrl)
+    info('')
+    info('2. Login with your Google account.')
+    info('3. You will be redirected to a localhost URL (which may fail to load).')
+    info('4. Copy that ENTIRE localhost URL and paste it below.')
+    info('')
+    
+    const { pastedUrl } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'pastedUrl',
+        message: 'Paste the full redirect URL here:',
+        validate: (input: string) => input.trim().length > 0 ? true : 'Please paste the URL'
+      }
+    ])
+    
+    try {
+      const url = new URL(pastedUrl.trim())
+      const code = url.searchParams.get('code')
+      const returnedState = url.searchParams.get('state')
+      const errorParam = url.searchParams.get('error')
+      
+      if (errorParam) {
+        return { success: false, error: errorParam }
+      }
+      
+      if (!code || returnedState !== state) {
+        return { success: false, error: 'Invalid URL: Missing code or state mismatch' }
+      }
+      
+      return await completeLogin(code, redirectUri)
+    } catch (err) {
+      if (err instanceof Error) {
+        return { success: false, error: err.message }
+      }
+      return { success: false, error: 'Invalid URL format' }
+    }
+  }
   
   return new Promise((resolve) => {
     let resolved = false
@@ -388,47 +476,15 @@ export async function startOAuthFlow(options: OAuthOptions = {}): Promise<OAuthR
         }
         
         try {
-          // Exchange code for tokens
-          const tokenResponse = await exchangeCodeForTokens(code, redirectUri)
-          
-          // Get user email
-          const email = await getUserEmail(tokenResponse.access_token)
-          
-          // Resolve project ID from Cloud Code API (may trigger onboarding if needed)
-          let projectId: string | undefined
-          try {
-            const projectResult = await resolveProjectId(tokenResponse.access_token)
-            projectId = projectResult.projectId
-            if (projectId) {
-              debug('oauth', `Project ID resolved: ${projectId}`)
-            } else {
-              debug('oauth', 'No project ID obtained (will fetch on demand)')
-            }
-          } catch (err) {
-            debug('oauth', 'Failed to resolve project ID during login (will fetch on demand)', err)
-            // Continue without project ID - it will be fetched on demand
-          }
-          
-          // Save tokens using account manager
-          const tokens: StoredTokens = {
-            accessToken: tokenResponse.access_token,
-            refreshToken: tokenResponse.refresh_token || '',
-            expiresAt: Date.now() + tokenResponse.expires_in * 1000,
-            email,
-            projectId
-          }
-          
-          // Add/update account via account manager
-          if (email) {
-            getAccountManager().addAccount(tokens, email)
-          }
+          // Use common login logic
+          const result = await completeLogin(code, redirectUri)
           
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end(`
             <html>
               <body style="font-family: system-ui; padding: 40px; text-align: center;">
                 <h1>Login Successful!</h1>
-                <p>You are now logged in${email ? ` as <strong>${email}</strong>` : ''}.</p>
+                <p>You are now logged in${result.email ? ` as <strong>${result.email}</strong>` : ''}.</p>
                 <p>You can close this window and return to the terminal.</p>
               </body>
             </html>
@@ -436,7 +492,7 @@ export async function startOAuthFlow(options: OAuthOptions = {}): Promise<OAuthR
           
           resolved = true
           server.close()
-          resolve({ success: true, email })
+          resolve(result)
         } catch (err) {
           res.writeHead(500, { 'Content-Type': 'text/html' })
           res.end('<html><body><h1>Login Failed</h1><p>Token exchange failed.</p></body></html>')

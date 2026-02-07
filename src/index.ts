@@ -33,6 +33,7 @@ program
   .command('login')
   .description('Authenticate with Google (adds a new account)')
   .option('--no-browser', 'Do not open browser, print URL instead')
+  .option('--manual', 'Manual login flow (copy-paste URL)')
   .option('-p, --port <port>', 'Port for OAuth callback server', parseInt)
   .action(loginCommand)
 

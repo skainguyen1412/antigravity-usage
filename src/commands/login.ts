@@ -13,6 +13,7 @@ import { resetTokenManager } from '../google/token-manager.js'
 interface LoginOptions {
   noBrowser?: boolean
   port?: number
+  manual?: boolean
 }
 
 export async function loginCommand(options: LoginOptions): Promise<void> {
@@ -25,7 +26,8 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   
   const result = await startOAuthFlow({
     noBrowser: options.noBrowser,
-    port: options.port
+    port: options.port,
+    manual: options.manual
   })
   
   if (result.success) {
