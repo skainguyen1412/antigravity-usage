@@ -60,6 +60,7 @@ program
   .option('--all', 'Show quota for all accounts')
   .option('-a, --account <email>', 'Show quota for specific account')
   .option('--refresh', 'Force refresh (ignore cache)')
+  .option('--all-models', 'Include autocomplete models (Gemini 2.5) in quota display')
   .action(quotaCommand)
 
 // Accounts command with subcommands

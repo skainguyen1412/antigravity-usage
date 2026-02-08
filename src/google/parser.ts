@@ -11,7 +11,7 @@ import type { LoadCodeAssistResponse, FetchAvailableModelsResponse, ModelInfo } 
  */
 function parseResetTime(resetTime?: string): number | undefined {
   if (!resetTime) return undefined
-  
+
   try {
     const resetDate = new Date(resetTime)
     const now = Date.now()
@@ -27,14 +27,15 @@ function parseResetTime(resetTime?: string): number | undefined {
  */
 function parseModelInfo(modelId: string, model: ModelInfo): ModelQuotaInfo {
   const quotaInfo = model.quotaInfo
-  
+
   return {
     label: model.displayName || model.label || modelId,
     modelId: modelId,
     remainingPercentage: quotaInfo?.remainingFraction,
     isExhausted: quotaInfo?.isExhausted ?? (quotaInfo?.remainingFraction === 0),
     resetTime: quotaInfo?.resetTime,
-    timeUntilResetMs: parseResetTime(quotaInfo?.resetTime)
+    timeUntilResetMs: parseResetTime(quotaInfo?.resetTime),
+    isAutocompleteOnly: modelId.includes('gemini-2.5') || (model.displayName || '').includes('Gemini 2.5')
   }
 }
 
@@ -44,15 +45,15 @@ function parseModelInfo(modelId: string, model: ModelInfo): ModelQuotaInfo {
 function parsePromptCredits(response: LoadCodeAssistResponse): PromptCreditsInfo | undefined {
   const monthly = response.planInfo?.monthlyPromptCredits
   const available = response.availablePromptCredits
-  
+
   if (monthly === undefined || available === undefined) {
     return undefined
   }
-  
+
   const used = monthly - available
   const usedPercentage = monthly > 0 ? used / monthly : 0
   const remainingPercentage = monthly > 0 ? available / monthly : 0
-  
+
   return {
     available,
     monthly,
@@ -98,25 +99,25 @@ export function parseQuotaSnapshot(
   email?: string
 ): QuotaSnapshot {
   debug('parser', 'Parsing quota snapshot')
-  
+
   const promptCredits = parsePromptCredits(codeAssistResponse)
   const planType = codeAssistResponse.planInfo?.planType
-  
+
   // Models is now an object keyed by model ID
   const modelsMap = modelsResponse.models || {}
   const models: ModelQuotaInfo[] = []
-  
+
   for (const [modelId, modelInfo] of Object.entries(modelsMap)) {
     if (shouldShowModel(modelId, modelInfo)) {
       models.push(parseModelInfo(modelId, modelInfo))
     }
   }
-  
+
   // Sort by displayName
   models.sort((a, b) => a.label.localeCompare(b.label))
-  
+
   debug('parser', `Parsed ${models.length} models`)
-  
+
   return {
     timestamp: new Date().toISOString(),
     method: 'google',

@@ -18,6 +18,7 @@ export interface ModelQuotaInfo {
   isExhausted: boolean
   resetTime?: string
   timeUntilResetMs?: number
+  isAutocompleteOnly?: boolean
 }
 
 export interface PromptCreditsInfo {

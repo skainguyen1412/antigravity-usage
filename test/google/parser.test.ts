@@ -44,7 +44,7 @@ describe('parseQuotaSnapshot', () => {
 
     expect(snapshot.method).toBe('google')
     expect(snapshot.timestamp).toBeDefined()
-    
+
     // Prompt credits
     expect(snapshot.promptCredits).toBeDefined()
     expect(snapshot.promptCredits?.available).toBe(450)
@@ -54,12 +54,12 @@ describe('parseQuotaSnapshot', () => {
 
     // Models - sorted alphabetically
     expect(snapshot.models).toHaveLength(2)
-    
+
     // Claude comes before Gemini alphabetically
     expect(snapshot.models[0].label).toBe('Claude 3.5 Sonnet')
     expect(snapshot.models[0].modelId).toBe('claude-3.5-sonnet')
     expect(snapshot.models[0].isExhausted).toBe(true)
-    
+
     expect(snapshot.models[1].label).toBe('Gemini 2.0 Flash')
     expect(snapshot.models[1].modelId).toBe('gemini-2.0-flash')
     expect(snapshot.models[1].remainingPercentage).toBe(0.85)
@@ -157,7 +157,11 @@ describe('parseQuotaSnapshot', () => {
     const snapshot = parseQuotaSnapshot({}, modelsResponse)
 
     // Only gemini-2.5-pro should be included
-    expect(snapshot.models).toHaveLength(1)
-    expect(snapshot.models[0].label).toBe('Gemini 2.5 Pro')
+    expect(snapshot.models.some(m => m.modelId === 'chat_12345')).toBe(false)
+    expect(snapshot.models.some(m => m.modelId === 'tab_flash')).toBe(false)
+
+    const gemini25 = snapshot.models.find(m => m.modelId === 'gemini-2.5-pro')
+    expect(gemini25).toBeDefined()
+    expect(gemini25?.isAutocompleteOnly).toBe(true)
   })
 })

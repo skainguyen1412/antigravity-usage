@@ -40,7 +40,7 @@ describe('local-parser', () => {
         usedPercentage: 0.1,
         remainingPercentage: 0.9
       })
-      
+
       expect(snapshot.models).toHaveLength(1)
       expect(snapshot.models[0]).toEqual({
         modelId: 'gemini-2.0',
@@ -48,7 +48,8 @@ describe('local-parser', () => {
         remainingPercentage: 0.8,
         isExhausted: false,
         resetTime: '2026-01-15T12:00:00Z',
-        timeUntilResetMs: 3600000
+        timeUntilResetMs: 3600000,
+        isAutocompleteOnly: false
       })
     })
 

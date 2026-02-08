@@ -6,14 +6,21 @@ import Table from 'cli-table3'
 import type { QuotaSnapshot, ModelQuotaInfo } from './types.js'
 
 /**
+ * Options for quota formatting
+ */
+export interface FormatOptions {
+  allModels?: boolean
+}
+
+/**
  * Format milliseconds to human readable time
  */
 function formatTimeUntilReset(ms?: number): string {
   if (ms === undefined || ms <= 0) return 'N/A'
-  
+
   const hours = Math.floor(ms / (1000 * 60 * 60))
   const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60))
-  
+
   if (hours > 0) {
     return `${hours}h ${minutes}m`
   }
@@ -30,7 +37,7 @@ function formatRemaining(model: ModelQuotaInfo): string {
   if (model.remainingPercentage === undefined) {
     return 'N/A'
   }
-  
+
   const pct = Math.round(model.remainingPercentage * 100)
   if (pct >= 75) return `🟢 ${pct}%`
   if (pct >= 50) return `🟡 ${pct}%`
@@ -41,13 +48,13 @@ function formatRemaining(model: ModelQuotaInfo): string {
 /**
  * Print quota as a formatted table
  */
-export function printQuotaTable(snapshot: QuotaSnapshot): void {
+export function printQuotaTable(snapshot: QuotaSnapshot, options: FormatOptions = {}): void {
   const timestamp = new Date(snapshot.timestamp).toLocaleString()
-  
+
   console.log()
   console.log(`📊 Antigravity Quota Status (via ${snapshot.method.toUpperCase()})`)
   console.log(`   Retrieved: ${timestamp}`)
-  
+
   // Display user info
   if (snapshot.email || snapshot.planType) {
     const userParts: string[] = []
@@ -59,10 +66,12 @@ export function printQuotaTable(snapshot: QuotaSnapshot): void {
     }
     console.log(`   ${userParts.join(' | ')}`)
   }
-  console.log()
-  
-  // Models table
-  if (snapshot.models.length > 0) {
+
+  const visibleModels = options.allModels
+    ? snapshot.models
+    : snapshot.models.filter(m => !m.isAutocompleteOnly)
+
+  if (visibleModels.length > 0) {
     const table = new Table({
       head: ['Model', 'Remaining', 'Resets In'],
       style: {
@@ -70,20 +79,23 @@ export function printQuotaTable(snapshot: QuotaSnapshot): void {
         border: ['gray']
       }
     })
-    
-    for (const model of snapshot.models) {
+
+    for (const model of visibleModels) {
       table.push([
         model.label,
         formatRemaining(model),
         formatTimeUntilReset(model.timeUntilResetMs)
       ])
     }
-    
+
     console.log(table.toString())
   } else {
     console.log('No model quota information available.')
+    if (!options.allModels && snapshot.models.some(m => m.isAutocompleteOnly)) {
+      console.log('Tip: Use --all-models to see autocomplete models.')
+    }
   }
-  
+
   console.log()
 }
 
