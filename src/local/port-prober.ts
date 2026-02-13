@@ -6,6 +6,9 @@ import https from 'https'
 import http from 'http'
 import { debug } from '../core/logger.js'
 
+const CONNECT_RPC_PATH = '/exa.language_server_pb.LanguageServerService/GetUnleashData'
+const VALID_CONNECT_STATUSES = new Set([200, 401])
+
 export interface ProbeResult {
   baseUrl: string
   protocol: 'https' | 'http'
@@ -52,7 +55,7 @@ async function probePort(port: number, csrfToken?: string, timeout = 500): Promi
   }
   
   // Fallback to HTTP
-  const httpResult = await probeHttp(port, timeout)
+  const httpResult = await probeHttp(port, timeout, csrfToken)
   if (httpResult) {
     return httpResult
   }
@@ -69,7 +72,7 @@ function probeHttps(port: number, timeout: number, csrfToken?: string): Promise<
     const options: https.RequestOptions = {
       hostname: '127.0.0.1',
       port,
-      path: '/exa.language_server_pb.LanguageServerService/GetUnleashData',
+      path: CONNECT_RPC_PATH,
       method: 'POST',
       timeout,
       rejectUnauthorized: false, // Allow self-signed certificates
@@ -81,8 +84,7 @@ function probeHttps(port: number, timeout: number, csrfToken?: string): Promise<
     }
     
     const req = https.request(options, (res) => {
-      // Check for successful response
-      if (res.statusCode === 200) {
+      if (res.statusCode && VALID_CONNECT_STATUSES.has(res.statusCode)) {
         debug('port-prober', `HTTPS Connect RPC probe on port ${port}: status ${res.statusCode} - valid connect port`)
         resolve({
           baseUrl: `https://127.0.0.1:${port}`,
@@ -118,27 +120,49 @@ function probeHttps(port: number, timeout: number, csrfToken?: string): Promise<
 /**
  * Probe a port with HTTP
  */
-function probeHttp(port: number, timeout: number): Promise<ProbeResult | null> {
+function probeHttp(port: number, timeout: number, csrfToken?: string): Promise<ProbeResult | null> {
   return new Promise((resolve) => {
     const options: http.RequestOptions = {
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port,
-      path: '/',
-      method: 'GET',
+      path: CONNECT_RPC_PATH,
+      method: 'POST',
       timeout,
+      headers: {
+        'Content-Type': 'application/json',
+        'Connect-Protocol-Version': '1',
+        ...(csrfToken ? { 'X-Codeium-Csrf-Token': csrfToken } : {})
+      }
     }
     
     const req = http.request(options, (res) => {
-      // Any response (even 404) means server is there
-      debug('port-prober', `HTTP probe on port ${port}: status ${res.statusCode}`)
-      resolve({
-        baseUrl: `http://localhost:${port}`,
-        protocol: 'http',
-        port
+      let data = ''
+      res.on('data', (chunk) => {
+        data += chunk.toString()
       })
-      
-      // Consume response data to free up memory
-      res.resume()
+
+      res.on('end', () => {
+        if (
+          data.toLowerCase().includes('client sent an http request to an https server')
+        ) {
+          debug('port-prober', `HTTP probe on port ${port}: protocol mismatch response, rejecting`)
+          resolve(null)
+          return
+        }
+
+        if (res.statusCode && VALID_CONNECT_STATUSES.has(res.statusCode)) {
+          debug('port-prober', `HTTP Connect RPC probe on port ${port}: status ${res.statusCode} - valid connect port`)
+          resolve({
+            baseUrl: `http://127.0.0.1:${port}`,
+            protocol: 'http',
+            port
+          })
+          return
+        }
+
+        debug('port-prober', `HTTP probe on port ${port}: status ${res.statusCode} - not connect port`)
+        resolve(null)
+      })
     })
     
     req.on('error', (err) => {
@@ -152,6 +176,7 @@ function probeHttp(port: number, timeout: number): Promise<ProbeResult | null> {
       resolve(null)
     })
     
+    req.write(JSON.stringify({ wrapper_data: {} }))
     req.end()
   })
 }

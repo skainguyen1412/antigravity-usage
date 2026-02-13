@@ -126,5 +126,37 @@ WIN-PC,"C:\\Program Files\\Antigravity\\antigravity.exe" --language-server --csr
       
       Object.defineProperty(process, 'platform', { value: originalPlatform })
     })
+
+    it('should prefer Windows language server process when multiple antigravity candidates exist', async () => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: 'win32' })
+
+      const mockStdout = `
+Node,CommandLine,ProcessId
+WIN-PC,"C:\\Program Files\\Antigravity\\Antigravity.exe",1111
+WIN-PC,"C:\\Users\\mrw-l\\.antigravity\\language_server_windows_x64.exe --csrf_token token-2 --extension_server_port 60479",2222
+`
+
+      const mockExec = vi.mocked(child_process.exec)
+      mockExec.mockImplementation(((cmd: string, options: any, callback: any) => {
+        const cb = typeof options === 'function' ? options : callback
+        if (typeof cmd === 'string' && cmd.includes('wmic')) {
+          cb(null, { stdout: mockStdout, stderr: '' })
+        } else {
+          cb(new Error('Command failed'), null)
+        }
+      }) as any)
+
+      const result = await detectAntigravityProcess()
+
+      expect(result).toEqual({
+        pid: 2222,
+        csrfToken: 'token-2',
+        extensionServerPort: 60479,
+        commandLine: '"C:\\Users\\mrw-l\\.antigravity\\language_server_windows_x64.exe --csrf_token token-2 --extension_server_port 60479"'
+      })
+
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+    })
   })
 })

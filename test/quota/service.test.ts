@@ -121,5 +121,32 @@ describe('quota service', () => {
       expect(cloudCodeModule.CloudCodeClient).toHaveBeenCalled()
       expect(result.method).toBe('google')
     })
+
+    it('should fallback to extension_server_port when discoverPorts returns empty', async () => {
+      vi.mocked(localModule.detectAntigravityProcess).mockResolvedValue({
+        pid: 123,
+        extensionServerPort: 60479,
+        commandLine: ''
+      })
+      vi.mocked(localModule.discoverPorts).mockResolvedValue([])
+      vi.mocked(localModule.probeForConnectAPI).mockResolvedValue({
+        baseUrl: 'https://127.0.0.1:60479',
+        protocol: 'https',
+        port: 60479
+      })
+      vi.mocked(localModule.ConnectClient).mockImplementation(() => ({
+        getUserStatus: vi.fn().mockResolvedValue({})
+      }) as any)
+      vi.mocked(localModule.parseLocalQuotaSnapshot).mockReturnValue({
+        method: 'local',
+        timestamp: '',
+        models: []
+      } as any)
+
+      const result = await fetchQuota('local')
+
+      expect(localModule.probeForConnectAPI).toHaveBeenCalledWith([60479], undefined)
+      expect(result.method).toBe('local')
+    })
   })
 })

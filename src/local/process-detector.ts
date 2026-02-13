@@ -125,7 +125,8 @@ async function detectOnWindows(): Promise<AntigravityProcessInfo | null> {
     )
     
     const lines = stdout.split('\n').filter(line => line.trim() && !line.includes('Node,CommandLine,ProcessId'))
-    
+    const candidates: AntigravityProcessInfo[] = []
+
     for (const line of lines) {
       // CSV format: Node,CommandLine,ProcessId
       const parts = line.split(',')
@@ -134,19 +135,20 @@ async function detectOnWindows(): Promise<AntigravityProcessInfo | null> {
         const pid = parseInt(parts[parts.length - 1].trim(), 10)
         
         if (!isNaN(pid) && commandLine.toLowerCase().includes('antigravity')) {
-          debug('process-detector', `Found Antigravity process on Windows: PID ${pid}`)
-          
-          const csrfToken = extractArgument(commandLine, '--csrf_token')
-          const extensionServerPort = extractArgument(commandLine, '--extension_server_port')
-          
-          return {
+          candidates.push({
             pid,
-            csrfToken: csrfToken || undefined,
-            extensionServerPort: extensionServerPort ? parseInt(extensionServerPort, 10) : undefined,
+            csrfToken: extractArgument(commandLine, '--csrf_token') || undefined,
+            extensionServerPort: parsePortValue(extractArgument(commandLine, '--extension_server_port')),
             commandLine
-          }
+          })
         }
       }
+    }
+
+    const selected = selectBestWindowsCandidate(candidates)
+    if (selected) {
+      debug('process-detector', `Selected Antigravity process on Windows: PID ${selected.pid}`)
+      return selected
     }
     
     // Fallback: try PowerShell if WMIC doesn't work
@@ -173,6 +175,8 @@ async function detectOnWindowsPowerShell(): Promise<AntigravityProcessInfo | nul
     const processes = JSON.parse(stdout)
     const processList = Array.isArray(processes) ? processes : [processes]
     
+    const candidates: AntigravityProcessInfo[] = []
+
     for (const proc of processList) {
       if (proc.Id) {
         // Get command line for this process
@@ -181,23 +185,81 @@ async function detectOnWindowsPowerShell(): Promise<AntigravityProcessInfo | nul
         )
         
         const commandLine = cmdLine.trim()
-        const csrfToken = extractArgument(commandLine, '--csrf_token')
-        const extensionServerPort = extractArgument(commandLine, '--extension_server_port')
-        
-        return {
-          pid: proc.Id,
-          csrfToken: csrfToken || undefined,
-          extensionServerPort: extensionServerPort ? parseInt(extensionServerPort, 10) : undefined,
-          commandLine
+        if (!commandLine.toLowerCase().includes('antigravity')) {
+          continue
         }
+
+        candidates.push({
+          pid: proc.Id,
+          csrfToken: extractArgument(commandLine, '--csrf_token') || undefined,
+          extensionServerPort: parsePortValue(extractArgument(commandLine, '--extension_server_port')),
+          commandLine
+        })
       }
     }
-    
+
+    const selected = selectBestWindowsCandidate(candidates)
+    if (selected) {
+      debug('process-detector', `Selected Antigravity process on Windows (PowerShell): PID ${selected.pid}`)
+      return selected
+    }
+
     return null
   } catch (err) {
     debug('process-detector', 'Error detecting process on Windows with PowerShell', err)
     return null
   }
+}
+
+function parsePortValue(rawPort: string | null): number | undefined {
+  if (!rawPort) {
+    return undefined
+  }
+  const parsed = parseInt(rawPort, 10)
+  return isNaN(parsed) ? undefined : parsed
+}
+
+function scoreWindowsCandidate(candidate: AntigravityProcessInfo): number {
+  const lower = candidate.commandLine.toLowerCase()
+
+  let score = 0
+  if (lower.includes('antigravity')) score += 1
+  if (lower.includes('lsp')) score += 5
+  if (candidate.extensionServerPort) score += 10
+  if (candidate.csrfToken) score += 20
+  if (
+    lower.includes('language_server') ||
+    lower.includes('language-server') ||
+    lower.includes('exa.language_server_pb')
+  ) {
+    score += 50
+  }
+
+  return score
+}
+
+function selectBestWindowsCandidate(candidates: AntigravityProcessInfo[]): AntigravityProcessInfo | null {
+  if (candidates.length === 0) {
+    return null
+  }
+
+  debug('process-detector', `Found ${candidates.length} Antigravity candidate process(es) on Windows`)
+
+  let best: AntigravityProcessInfo | null = null
+  let bestScore = -1
+  for (const candidate of candidates) {
+    const score = scoreWindowsCandidate(candidate)
+    if (score > bestScore) {
+      best = candidate
+      bestScore = score
+    }
+  }
+
+  if (best) {
+    debug('process-detector', `Selected PID ${best.pid} with score ${bestScore}`)
+  }
+
+  return best
 }
 
 /**
