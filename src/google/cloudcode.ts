@@ -385,15 +385,17 @@ export class CloudCodeClient {
           
           try {
             const data = JSON.parse(jsonStr)
-            const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text
+            // Handle both response formats: with and without 'response' wrapper
+            const responseData = data.response || data
+            const candidateText = responseData.candidates?.[0]?.content?.parts?.[0]?.text
             if (candidateText) {
               fullText += candidateText
             }
-            if (data.usageMetadata) {
+            if (responseData.usageMetadata) {
               tokensUsed = {
-                prompt: data.usageMetadata.promptTokenCount || 0,
-                completion: data.usageMetadata.candidatesTokenCount || 0,
-                total: data.usageMetadata.totalTokenCount || 0
+                prompt: responseData.usageMetadata.promptTokenCount || 0,
+                completion: responseData.usageMetadata.candidatesTokenCount || 0,
+                total: responseData.usageMetadata.totalTokenCount || 0
               }
             }
           } catch {

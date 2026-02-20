@@ -174,9 +174,26 @@ Quickly check if your auth tokens are valid or expired.
 antigravity-usage wakeup config     # Interactive setup (takes 30 seconds)
 antigravity-usage wakeup install    # Install to native system cron
 antigravity-usage wakeup status     # Check configuration & next run
-antigravity-usage wakeup test       # Test trigger manually
+antigravity-usage wakeup test       # Test trigger manually (interactive)
 antigravity-usage wakeup history    # View trigger history
 ```
+
+**Quick Test with Flags:**
+```bash
+# Test with specific email and model
+antigravity-usage wakeup test -e your@gmail.com -m claude-sonnet-4-5
+
+# Full command with custom prompt
+antigravity-usage wakeup test --email your@gmail.com --model gemini-3-flash --prompt "hello"
+
+# Mix flags (missing ones will be prompted)
+antigravity-usage wakeup test -e your@gmail.com
+```
+
+**Available Options:**
+- `-e, --email <email>` - Account email to use for testing
+- `-m, --model <model>` - Model ID to test (e.g., claude-sonnet-4-5, gemini-3-flash)
+- `-p, --prompt <prompt>` - Test prompt to send (default: "hi")
 
 **Why This Matters:**
 Your Antigravity quota resets every ~5 hours, but if you don't use it, you lose it. The wakeup feature ensures you **automatically trigger** both Claude and Gemini models to keep your quota flowing.

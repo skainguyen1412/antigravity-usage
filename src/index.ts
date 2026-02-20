@@ -142,7 +142,10 @@ wakeupCmd
 wakeupCmd
   .command('test')
   .description('Test trigger manually')
-  .action(() => wakeupCommand('test', [], {}))
+  .option('-e, --email <email>', 'Account email to use for testing')
+  .option('-m, --model <model>', 'Model ID to test')
+  .option('-p, --prompt <prompt>', 'Test prompt to send', 'hi')
+  .action((options) => wakeupCommand('test', [], options))
 
 wakeupCmd
   .command('history')
