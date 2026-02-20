@@ -44,6 +44,9 @@ interface WakeupOptions {
   scheduled?: boolean
   limit?: string
   json?: boolean
+  email?: string
+  model?: string
+  prompt?: string
 }
 
 /**
@@ -74,7 +77,7 @@ export async function wakeupCommand(
       break
     
     case 'test':
-      await runTestTrigger()
+      await runTestTrigger(options)
       break
     
     case 'history':
@@ -384,7 +387,7 @@ async function uninstallSchedule(): Promise<void> {
 /**
  * Run a manual test trigger
  */
-async function runTestTrigger(): Promise<void> {
+async function runTestTrigger(options: WakeupOptions = {}): Promise<void> {
   console.log('\n🧪 Test Trigger\n')
   
   const accountManager = getAccountManager()
@@ -396,8 +399,18 @@ async function runTestTrigger(): Promise<void> {
   }
   
   // Select account
-  let accountEmail = accounts[0]
-  if (accounts.length > 1) {
+  let accountEmail: string
+  if (options.email) {
+    // Validate provided email
+    if (!accounts.includes(options.email)) {
+      console.log(`❌ Account "${options.email}" not found.`)
+      console.log(`   Available accounts: ${accounts.join(', ')}`)
+      return
+    }
+    accountEmail = options.email
+  } else if (accounts.length === 1) {
+    accountEmail = accounts[0]
+  } else {
     const { selectedAccount } = await inquirer.prompt([{
       type: 'list',
       name: 'selectedAccount',
@@ -408,21 +421,22 @@ async function runTestTrigger(): Promise<void> {
   }
   
   // Enter model ID
-  const config = loadWakeupConfig()
-  const { modelId } = await inquirer.prompt([{
-    type: 'input',
-    name: 'modelId',
-    message: 'Model ID to test:',
-    default: config?.selectedModels[0] || 'claude-sonnet-4-5'
-  }])
+  let modelId: string
+  if (options.model) {
+    modelId = options.model
+  } else {
+    const config = loadWakeupConfig()
+    const { selectedModel } = await inquirer.prompt([{
+      type: 'input',
+      name: 'selectedModel',
+      message: 'Model ID to test:',
+      default: config?.selectedModels[0] || 'claude-sonnet-4-5'
+    }])
+    modelId = selectedModel
+  }
   
   // Enter prompt
-  const { prompt } = await inquirer.prompt([{
-    type: 'input',
-    name: 'prompt',
-    message: 'Test prompt:',
-    default: 'hi'
-  }])
+  const prompt = options.prompt || 'hi'
   
   console.log('\n⏳ Triggering...')
   
