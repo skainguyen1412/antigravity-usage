@@ -108,7 +108,7 @@ export function getOrCreateConfig(): WakeupConfig {
     // Auto-migrate to new default models if selectedModels is empty
     // This ensures both Claude and Gemini families (both quota groups) are triggered
     if (!existing.selectedModels || existing.selectedModels.length === 0) {
-      existing.selectedModels = ['claude-sonnet-4-5', 'gemini-3-flash', 'gemini-3-pro-low']
+      existing.selectedModels = ['claude-sonnet-4-6', 'gemini-3-flash', 'gemini-3-pro-low']
       saveWakeupConfig(existing)
       debug('wakeup-storage', 'Migrated config to new default models')
     }

@@ -196,10 +196,10 @@ async function configureWakeup(): Promise<void> {
   }
   
   // Step 4: Models - Use default models that cover both families
-  // claude-sonnet-4-5 triggers Claude family
+  // claude-sonnet-4-6 triggers Claude family
   // gemini-3-flash and gemini-3-pro-low trigger both Gemini quota groups
-  config.selectedModels = ['claude-sonnet-4-5', 'gemini-3-flash', 'gemini-3-pro-low']
-  console.log('\n   📦 Models: claude-sonnet-4-5, gemini-3-flash, gemini-3-pro-low')
+  config.selectedModels = ['claude-sonnet-4-6', 'gemini-3-flash', 'gemini-3-pro-low']
+  console.log('\n   📦 Models: claude-sonnet-4-6, gemini-3-flash, gemini-3-pro-low')
   console.log('      (Triggers both Claude and Gemini families)')
   
   // Step 5: Select accounts
@@ -430,7 +430,7 @@ async function runTestTrigger(options: WakeupOptions = {}): Promise<void> {
       type: 'input',
       name: 'selectedModel',
       message: 'Model ID to test:',
-      default: config?.selectedModels[0] || 'claude-sonnet-4-5'
+      default: config?.selectedModels[0] || 'claude-sonnet-4-6'
     }])
     modelId = selectedModel
   }
