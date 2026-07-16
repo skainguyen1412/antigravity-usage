@@ -19,7 +19,7 @@ import { executeTrigger } from './trigger-service.js'
 import type { DetectionResult } from './types.js'
 
 // Smart trigger thresholds
-const FULL_QUOTA_THRESHOLD = 99        // Consider "full" if >= 99%
+const FULL_QUOTA_THRESHOLD = 0.99      // Consider "full" if >= 99% (represented as fraction)
 const RESET_TIME_MIN_HOURS = 4.5       // At least 4.5 hours until reset
 const RESET_TIME_MAX_HOURS = 5.5       // At most 5.5 hours until reset (catches the ~5h window)
 const RESET_TIME_MIN_MS = RESET_TIME_MIN_HOURS * 60 * 60 * 1000
@@ -43,7 +43,7 @@ export function isModelUnused(model: ModelQuotaInfo): boolean {
   
   // Check if quota is full (100% or very close)
   if (model.remainingPercentage < FULL_QUOTA_THRESHOLD) {
-    debug('reset-detector', `${model.modelId}: Not full (${model.remainingPercentage}%)`)
+    debug('reset-detector', `${model.modelId}: Not full (${Math.round(model.remainingPercentage * 100)}%)`)
     return false
   }
   

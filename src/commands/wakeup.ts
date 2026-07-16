@@ -4,6 +4,7 @@
 
 import inquirer from 'inquirer'
 import Table from 'cli-table3'
+import { fetchQuota } from '../quota/service.js'
 import {
   loadWakeupConfig,
   saveWakeupConfig,
@@ -195,12 +196,58 @@ async function configureWakeup(): Promise<void> {
     config.resetCooldownMinutes = resetCooldown
   }
   
-  // Step 4: Models - Use default models that cover both families
-  // claude-sonnet-4-5 triggers Claude family
-  // gemini-3-flash and gemini-3-pro-low trigger both Gemini quota groups
-  config.selectedModels = ['claude-sonnet-4-5', 'gemini-3-flash', 'gemini-3-pro-low']
-  console.log('\n   📦 Models: claude-sonnet-4-5, gemini-3-flash, gemini-3-pro-low')
-  console.log('      (Triggers both Claude and Gemini families)')
+  // Step 4: Models - Dynamically fetch and select models
+  console.log('   ⌛ Fetching available models from Google Cloud Code API...')
+  let availableModels: { label: string; modelId: string }[] = []
+  try {
+    const snapshot = await fetchQuota('google')
+    if (snapshot && snapshot.models && snapshot.models.length > 0) {
+      availableModels = snapshot.models
+        .filter(m => !m.isAutocompleteOnly)
+        .map(m => ({ label: m.label, modelId: m.modelId }))
+    }
+  } catch (err) {
+    debug('wakeup', 'Failed to fetch models from API:', err)
+    console.log('⚠️  Could not fetch live models from Google API. Using fallback list.')
+  }
+
+  const fallbackList = [
+    { label: 'Claude Sonnet 4.6 (Thinking)', modelId: 'claude-sonnet-4-6' },
+    { label: 'Claude Opus 4.6 (Thinking)', modelId: 'claude-opus-4-6-thinking' },
+    { label: 'Gemini 3 Flash', modelId: 'gemini-3-flash' },
+    { label: 'Gemini 3.5 Flash (High)', modelId: 'gemini-3-flash-agent' },
+    { label: 'Gemini 3.1 Pro (Low)', modelId: 'gemini-3.1-pro-low' },
+    { label: 'Gemini 3.1 Pro (High)', modelId: 'gemini-3-1-pro-high' },
+    { label: 'GPT-OSS 120B (Medium)', modelId: 'gpt-oss-120b-medium' }
+  ]
+
+  const finalModels = availableModels.length > 0 ? availableModels : fallbackList
+
+  // Ensure currently selected models are kept in the choices list so they aren't lost
+  const existingSelected = config.selectedModels || []
+  for (const modelId of existingSelected) {
+    if (!finalModels.some(m => m.modelId === modelId)) {
+      finalModels.push({ label: `Custom Model (${modelId})`, modelId })
+    }
+  }
+
+  const defaultSelected = existingSelected.length > 0 
+    ? existingSelected 
+    : ['claude-sonnet-4-6', 'gemini-3-flash']
+
+  const { selectedModels } = await inquirer.prompt([{
+    type: 'checkbox',
+    name: 'selectedModels',
+    message: 'Select models to warm up:',
+    choices: finalModels.map(m => ({
+      name: `${m.label} (${m.modelId})`,
+      value: m.modelId,
+      checked: defaultSelected.includes(m.modelId)
+    })),
+    validate: (answer) => answer.length > 0 ? true : 'You must select at least one model.'
+  }])
+
+  config.selectedModels = selectedModels
   
   // Step 5: Select accounts
   if (accounts.length > 1) {
@@ -430,7 +477,7 @@ async function runTestTrigger(options: WakeupOptions = {}): Promise<void> {
       type: 'input',
       name: 'selectedModel',
       message: 'Model ID to test:',
-      default: config?.selectedModels[0] || 'claude-sonnet-4-5'
+      default: config?.selectedModels[0] || 'claude-sonnet-4-6'
     }])
     modelId = selectedModel
   }

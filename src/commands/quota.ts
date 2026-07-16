@@ -7,6 +7,7 @@ import { printQuotaTable, printQuotaJson } from '../quota/format.js'
 import { getTokenManager, getTokenManagerForAccount, resetTokenManager } from '../google/token-manager.js'
 import { getAccountManager, saveCache, isCacheValid, loadCache, getCacheAge } from '../accounts/index.js'
 import { renderAllQuotaTable, type AllAccountsQuotaResult } from '../render/index.js'
+import { detectResetAndTrigger } from '../wakeup/reset-detector.js'
 import { error as logError, debug, info } from '../core/logger.js'
 import {
   NotLoggedInError,
@@ -41,17 +42,21 @@ async function fetchSingleAccountQuota(options: QuotaOptions): Promise<void> {
   // Force google method when --account is specified
   // (local method always uses IDE's logged-in account)
   let method = options.method || 'auto'
+  
+  const tokenManager = options.account
+    ? getTokenManagerForAccount(options.account)
+    : getTokenManager()
+
   if (options.account && method !== 'google') {
     debug('quota', `Account specified, forcing google method (local uses IDE account)`)
+    method = 'google'
+  } else if (options.refresh && method === 'auto' && tokenManager.isLoggedIn()) {
+    debug('quota', `Refresh requested and user is logged in, preferring google method to bypass IDE cache`)
     method = 'google'
   }
 
   // Only check login for google method
   if (method === 'google') {
-    const tokenManager = options.account
-      ? getTokenManagerForAccount(options.account)
-      : getTokenManager()
-
     if (!tokenManager.isLoggedIn()) {
       logError('Not logged in. Run: antigravity-usage login')
       process.exit(1)
@@ -69,6 +74,24 @@ async function fetchSingleAccountQuota(options: QuotaOptions): Promise<void> {
     }
 
     try {
+      if (options.refresh) {
+        info('🔄 Refreshing quota data...\n')
+      }
+
+      // Check cache first (unless refresh requested)
+      if (!options.refresh && accountEmail && isCacheValid(accountEmail)) {
+        const cached = loadCache(accountEmail)
+        if (cached) {
+          debug('quota', `Using cached data for ${accountEmail}`)
+          if (options.json) {
+            printQuotaJson(cached)
+          } else {
+            printQuotaTable(cached, { allModels: options.allModels })
+          }
+          return
+        }
+      }
+
       debug('quota', `Fetching quota via ${method} method...`)
       const snapshot = await fetchQuota(method)
 
@@ -82,6 +105,11 @@ async function fetchSingleAccountQuota(options: QuotaOptions): Promise<void> {
       } else {
         printQuotaTable(snapshot, { allModels: options.allModels })
       }
+      
+      // Run reset detection asynchronously to avoid blocking
+      detectResetAndTrigger(snapshot).catch(err => {
+        debug('quota', 'Failed to run reset detector:', err)
+      })
     } finally {
       // Always restore original active account
       if (accountSwitched && originalActiveEmail) {
@@ -143,6 +171,11 @@ async function fetchAllAccountsQuota(options: QuotaOptions): Promise<void> {
 
       // Cache the result
       saveCache(email, snapshot)
+
+      // Run reset detection asynchronously
+      detectResetAndTrigger(snapshot).catch(err => {
+        debug('quota', 'Failed to run reset detector:', err)
+      })
 
       results.push({
         email,

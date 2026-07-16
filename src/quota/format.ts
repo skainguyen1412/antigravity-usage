@@ -81,10 +81,27 @@ export function printQuotaTable(snapshot: QuotaSnapshot, options: FormatOptions 
     })
 
     for (const model of visibleModels) {
+      let timeUntilResetMs = model.timeUntilResetMs
+      
+      // Dynamically calculate remaining time if we have the absolute reset time
+      if (model.resetTime) {
+        try {
+          const resetDate = new Date(model.resetTime)
+          const now = Date.now()
+          const diff = resetDate.getTime() - now
+          // Only use dynamic time if it's valid and in the future
+          if (!isNaN(diff) && diff > 0) {
+            timeUntilResetMs = diff
+          }
+        } catch {
+          // Fall back to static timeUntilResetMs on error
+        }
+      }
+
       table.push([
         model.label,
         formatRemaining(model),
-        formatTimeUntilReset(model.timeUntilResetMs)
+        formatTimeUntilReset(timeUntilResetMs)
       ])
     }
 
