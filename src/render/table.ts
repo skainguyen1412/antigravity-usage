@@ -253,8 +253,7 @@ export function renderAllQuotaTable(results: AllAccountsQuotaResult[], options: 
       if (relevantModels.length > 0) {
         // Find minimum remaining percentage among relevant models
         const percentages = relevantModels
-          .filter(m => m.remainingPercentage !== undefined)
-          .map(m => m.remainingPercentage!)
+          .map(m => m.remainingPercentage ?? 0)
 
         if (percentages.length > 0) {
           const minRemaining = Math.min(...percentages)
