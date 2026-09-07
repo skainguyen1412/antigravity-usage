@@ -2,6 +2,21 @@
  * Quota data types
  */
 
+export interface QuotaGroupBucketInfo {
+  bucketId: string
+  displayName: string
+  window: string
+  resetTime?: string
+  description?: string
+  remainingPercentage: number
+}
+
+export interface QuotaGroupSummaryInfo {
+  displayName: string
+  description?: string
+  buckets: QuotaGroupBucketInfo[]
+}
+
 export interface QuotaSnapshot {
   timestamp: string
   method: 'google' | 'local'
@@ -9,6 +24,7 @@ export interface QuotaSnapshot {
   planType?: string
   promptCredits?: PromptCreditsInfo
   models: ModelQuotaInfo[]
+  quotaGroups?: QuotaGroupSummaryInfo[]
 }
 
 export interface ModelQuotaInfo {

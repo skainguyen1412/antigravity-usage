@@ -3,8 +3,8 @@
  */
 
 import { debug } from '../core/logger.js'
-import type { QuotaSnapshot, ModelQuotaInfo, PromptCreditsInfo } from '../quota/types.js'
-import type { LoadCodeAssistResponse, FetchAvailableModelsResponse, ModelInfo } from './cloudcode.js'
+import type { QuotaSnapshot, ModelQuotaInfo, PromptCreditsInfo, QuotaGroupSummaryInfo } from '../quota/types.js'
+import type { LoadCodeAssistResponse, FetchAvailableModelsResponse, ModelInfo, RetrieveUserQuotaSummaryResponse } from './cloudcode.js'
 
 /**
  * Parse reset time string to milliseconds until reset
@@ -96,7 +96,8 @@ function shouldShowModel(modelId: string, model: ModelInfo): boolean {
 export function parseQuotaSnapshot(
   codeAssistResponse: LoadCodeAssistResponse,
   modelsResponse: FetchAvailableModelsResponse,
-  email?: string
+  email?: string,
+  quotaSummaryResponse?: RetrieveUserQuotaSummaryResponse
 ): QuotaSnapshot {
   debug('parser', 'Parsing quota snapshot')
 
@@ -118,12 +119,30 @@ export function parseQuotaSnapshot(
 
   debug('parser', `Parsed ${models.length} models`)
 
+  // Parse quota groups if available
+  let quotaGroups: QuotaGroupSummaryInfo[] | undefined
+  if (quotaSummaryResponse?.groups) {
+    quotaGroups = quotaSummaryResponse.groups.map(g => ({
+      displayName: g.displayName,
+      description: g.description,
+      buckets: (g.buckets || []).map(b => ({
+        bucketId: b.bucketId,
+        displayName: b.displayName,
+        window: b.window,
+        resetTime: b.resetTime,
+        description: b.description,
+        remainingPercentage: Math.round(b.remainingFraction * 100)
+      }))
+    }))
+  }
+
   return {
     timestamp: new Date().toISOString(),
     method: 'google',
     email,
     planType,
     promptCredits,
-    models
+    models,
+    quotaGroups
   }
 }

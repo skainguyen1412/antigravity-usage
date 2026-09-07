@@ -96,6 +96,32 @@ export function printQuotaTable(snapshot: QuotaSnapshot, options: FormatOptions 
     }
   }
 
+  // Display Quota Groups (Weekly & 5-Hour limits) if present
+  if (snapshot.quotaGroups && snapshot.quotaGroups.length > 0) {
+    console.log('\n📈 Quota Group Limits (Weekly & 5-Hour Windows):')
+    const groupTable = new Table({
+      head: ['Group', 'Window', 'Remaining', 'Reset Time'],
+      style: {
+        head: ['cyan'],
+        border: ['gray']
+      }
+    })
+
+    for (const group of snapshot.quotaGroups) {
+      for (const bucket of group.buckets) {
+        const pct = bucket.remainingPercentage
+        const statusIcon = pct >= 75 ? `🟢 ${pct}%` : pct >= 50 ? `🟡 ${pct}%` : pct >= 25 ? `🟠 ${pct}%` : `🔴 ${pct}%`
+        groupTable.push([
+          group.displayName,
+          bucket.displayName,
+          statusIcon,
+          bucket.resetTime ? new Date(bucket.resetTime).toLocaleString() : 'N/A'
+        ])
+      }
+    }
+    console.log(groupTable.toString())
+  }
+
   console.log()
 }
 
