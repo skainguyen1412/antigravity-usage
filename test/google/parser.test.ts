@@ -164,4 +164,71 @@ describe('parseQuotaSnapshot', () => {
     expect(gemini25).toBeDefined()
     expect(gemini25?.isAutocompleteOnly).toBe(true)
   })
+
+  it('should parse quotaSummaryResponse with weekly and 5h buckets', () => {
+    const quotaSummaryResponse = {
+      groups: [
+        {
+          displayName: 'Gemini Models',
+          description: 'Gemini Flash, Gemini Pro',
+          buckets: [
+            {
+              bucketId: 'gemini-weekly',
+              displayName: 'Weekly Limit Remaining',
+              window: 'weekly',
+              resetTime: '2026-09-14T12:00:00Z',
+              remainingFraction: 1.0
+            },
+            {
+              bucketId: 'gemini-5h',
+              displayName: 'Five Hour Limit Remaining',
+              window: '5h',
+              resetTime: '2026-09-07T17:00:00Z',
+              remainingFraction: 0.9
+            }
+          ]
+        },
+        {
+          displayName: 'Claude and GPT models',
+          description: 'Claude Opus, Claude Sonnet',
+          buckets: [
+            {
+              bucketId: '3p-weekly',
+              displayName: 'Weekly Limit Remaining',
+              window: 'weekly',
+              resetTime: '2026-09-12T20:00:00Z',
+              remainingFraction: 0.75
+            },
+            {
+              bucketId: '3p-5h',
+              displayName: 'Five Hour Limit Remaining',
+              window: '5h',
+              resetTime: '2026-09-07T17:00:00Z',
+              remainingFraction: 1.0
+            }
+          ]
+        }
+      ]
+    }
+
+    const snapshot = parseQuotaSnapshot({}, {}, 'developer@example.com', quotaSummaryResponse)
+
+    expect(snapshot.email).toBe('developer@example.com')
+    expect(snapshot.quotaGroups).toHaveLength(2)
+
+    const geminiGroup = snapshot.quotaGroups?.find(g => g.displayName === 'Gemini Models')
+    expect(geminiGroup).toBeDefined()
+    expect(geminiGroup?.buckets).toHaveLength(2)
+    expect(geminiGroup?.buckets[0].bucketId).toBe('gemini-weekly')
+    expect(geminiGroup?.buckets[0].remainingPercentage).toBe(100)
+    expect(geminiGroup?.buckets[1].bucketId).toBe('gemini-5h')
+    expect(geminiGroup?.buckets[1].remainingPercentage).toBe(90)
+
+    const claudeGroup = snapshot.quotaGroups?.find(g => g.displayName === 'Claude and GPT models')
+    expect(claudeGroup).toBeDefined()
+    expect(claudeGroup?.buckets[0].bucketId).toBe('3p-weekly')
+    expect(claudeGroup?.buckets[0].remainingPercentage).toBe(75)
+    expect(claudeGroup?.buckets[1].bucketId).toBe('3p-5h')
+    expect(claudeGroup?.buckets[1].remainingPercentage).toBe(100)
+  })
 })

@@ -79,6 +79,35 @@ export interface FetchAvailableModelsResponse {
 }
 
 /**
+ * Quota bucket details from retrieveUserQuotaSummary
+ */
+export interface QuotaBucket {
+  bucketId: string
+  displayName: string
+  window: string
+  resetTime?: string
+  description?: string
+  remainingFraction: number
+}
+
+/**
+ * Quota group (e.g. Gemini Models, Claude and GPT models)
+ */
+export interface QuotaGroup {
+  displayName: string
+  description?: string
+  buckets: QuotaBucket[]
+}
+
+/**
+ * Response structure for retrieveUserQuotaSummary
+ */
+export interface RetrieveUserQuotaSummaryResponse {
+  groups?: QuotaGroup[]
+  description?: string
+}
+
+/**
  * Cloud Code API client
  */
 export class CloudCodeClient {
@@ -278,6 +307,14 @@ export class CloudCodeClient {
   async fetchAvailableModels(): Promise<FetchAvailableModelsResponse> {
     const body = this.projectId ? { project: this.projectId } : {}
     return this.request<FetchAvailableModelsResponse>('/v1internal:fetchAvailableModels', body)
+  }
+
+  /**
+   * Fetch user quota summary including weekly and 5-hour limits across model groups
+   */
+  async retrieveUserQuotaSummary(): Promise<RetrieveUserQuotaSummaryResponse> {
+    const body = this.projectId ? { project: this.projectId } : { project: 'aicode-consumers' }
+    return this.request<RetrieveUserQuotaSummaryResponse>('/v1internal:retrieveUserQuotaSummary', body)
   }
   
   /**

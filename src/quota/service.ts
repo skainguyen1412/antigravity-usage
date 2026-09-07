@@ -4,7 +4,7 @@
 
 import { debug } from '../core/logger.js'
 import { getTokenManager } from '../google/token-manager.js'
-import { CloudCodeClient, type FetchAvailableModelsResponse } from '../google/cloudcode.js'
+import { CloudCodeClient, type FetchAvailableModelsResponse, type RetrieveUserQuotaSummaryResponse } from '../google/cloudcode.js'
 import { parseQuotaSnapshot } from '../google/parser.js'
 import { extractProjectId } from '../google/oauth.js'
 import { 
@@ -84,10 +84,19 @@ async function fetchQuotaGoogle(): Promise<QuotaSnapshot> {
     debug('service', 'Failed to fetch models (might need different permissions)', err)
     // Continue without models - we'll still show prompt credits
   }
-  
+
+  // Try to fetch quota summary (includes weekly and 5-hour limits across model groups)
+  let quotaSummaryResponse: RetrieveUserQuotaSummaryResponse | undefined
+  try {
+    quotaSummaryResponse = await client.retrieveUserQuotaSummary()
+    debug('service', 'Quota summary response received', JSON.stringify(quotaSummaryResponse))
+  } catch (err) {
+    debug('service', 'Failed to fetch quota summary', err)
+  }
+
   // Parse into snapshot with email
-  const snapshot = parseQuotaSnapshot(codeAssistResponse, modelsResponse, email)
-  
+  const snapshot = parseQuotaSnapshot(codeAssistResponse, modelsResponse, email, quotaSummaryResponse)
+
   debug('service', 'Quota snapshot created')
   return snapshot
 }
