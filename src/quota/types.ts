@@ -9,6 +9,7 @@ export interface QuotaSnapshot {
   planType?: string
   promptCredits?: PromptCreditsInfo
   models: ModelQuotaInfo[]
+  weeklyStatus?: Record<string, { status: 'ok' | 'exceeded' | 'rate_limited' | 'error'; message?: string }>
 }
 
 export interface ModelQuotaInfo {
@@ -19,6 +20,7 @@ export interface ModelQuotaInfo {
   resetTime?: string
   timeUntilResetMs?: number
   isAutocompleteOnly?: boolean
+  weeklyLimitStatus?: string
 }
 
 export interface PromptCreditsInfo {

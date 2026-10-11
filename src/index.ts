@@ -55,13 +55,15 @@ program
 // Quota command (default)
 program
   .command('quota', { isDefault: true })
-  .description('Fetch and display quota information')
+  .description('Fetch and display quota information (shows all accounts if multiple exist)')
   .option('--json', 'Output as JSON')
   .option('-m, --method <method>', 'Method to use: auto (default), local, or google', 'auto')
-  .option('--all', 'Show quota for all accounts')
+  .option('--all', 'Show quota for all accounts (default when multiple accounts exist)')
+  .option('--active', 'Show quota for active account only')
   .option('-a, --account <email>', 'Show quota for specific account')
+  .option('-w, --weekly', 'Probe and verify weekly quota limits with live check')
   .option('--refresh', 'Force refresh (ignore cache)')
-  .option('--all-models', 'Include autocomplete models (Gemini 2.5) in quota display')
+  .option('--all-models', 'Show all individual model variants instead of grouped Gemini')
   .action(quotaCommand)
 
 // Accounts command with subcommands
@@ -164,4 +166,3 @@ wakeupCmd.action(() => wakeupCommand('status', [], {}))
 
 // Parse and run
 program.parse()
-

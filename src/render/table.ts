@@ -4,7 +4,8 @@
 
 import Table from 'cli-table3'
 import type { AccountSummary } from '../accounts/types.js'
-import type { QuotaSnapshot } from '../quota/types.js'
+import type { QuotaSnapshot, ModelQuotaInfo } from '../quota/types.js'
+import { formatRemaining, formatTimeUntilReset, isGeminiModel } from '../quota/format.js'
 
 /**
  * Format relative time (e.g., "2 hours ago")
@@ -52,7 +53,7 @@ function formatCredits(credits: { used: number; limit: number } | null | undefin
  */
 export function renderAccountsTable(accounts: AccountSummary[]): void {
   if (accounts.length === 0) {
-    console.log('\n📭 No accounts found.')
+    console.log('\n📫 No accounts found.')
     console.log('\n💡 Run `antigravity-usage login` to add an account.\n')
     return
   }
@@ -63,14 +64,10 @@ export function renderAccountsTable(accounts: AccountSummary[]): void {
   const totalWidth = process.stdout.columns || 80
   const isSmallTerminal = totalWidth < 90
 
-  // Dynamic column widths
-  // If small terminal, use tighter packing
   const colWidths = isSmallTerminal
-    ? [25, 8, 12, 12] // Tighter widths for < 90 cols
-    : [30, 10, 15, 15] // Standard widths
+    ? [25, 8, 12, 12]
+    : [30, 10, 15, 15]
 
-  // Ensure we don't exceed total width with borders (approx 10 chars)
-  // If extremely small, let cli-table handle auto-sizing (pass undefined)
   const finalColWidths = totalWidth < 60 ? undefined : colWidths
 
   const tableOptions: any = {
@@ -117,24 +114,6 @@ export interface AllAccountsQuotaResult {
 }
 
 /**
- * Format quota remaining bar
- */
-function formatQuotaRemainingBar(remainingPercentage: number | undefined): string {
-  const width = 10
-  const filledChar = '█'
-  const emptyChar = '░'
-
-  if (remainingPercentage === undefined) {
-    return `${emptyChar.repeat(width)} N/A`
-  }
-
-  const filled = Math.round((remainingPercentage / 100) * width)
-  const empty = width - filled
-
-  return `${filledChar.repeat(filled)}${emptyChar.repeat(empty)} ${Math.round(remainingPercentage)}%`
-}
-
-/**
  * Options for quota rendering
  */
 export interface RenderOptions {
@@ -146,7 +125,7 @@ export interface RenderOptions {
  */
 export function renderAllQuotaTable(results: AllAccountsQuotaResult[], options: RenderOptions = {}): void {
   if (results.length === 0) {
-    console.log('\n📭 No accounts found.')
+    console.log('\n📫 No accounts found.')
     console.log('\n💡 Run `antigravity-usage login` to add an account.\n')
     return
   }
@@ -158,24 +137,14 @@ export function renderAllQuotaTable(results: AllAccountsQuotaResult[], options: 
     if (a.status !== 'error' && b.status === 'error') return -1
     if (a.status === 'error' && b.status === 'error') return 0
 
-    // Get remaining percentage for comparison
     const getRemaining = (result: AllAccountsQuotaResult): number => {
-      // Filter out autocomplete models if requested
-      const models = options.allModels
-        ? result.snapshot?.models
-        : result.snapshot?.models?.filter(m => !m.isAutocompleteOnly)
-
-      const firstModel = models?.[0]
-      if (!firstModel) return -1
-      if (firstModel.isExhausted) return 0
-      return firstModel.remainingPercentage ?? -1
+      const models = result.snapshot?.models || []
+      const gemini = models.find(isGeminiModel)
+      if (gemini?.isExhausted) return 0
+      return gemini?.remainingPercentage ?? -1
     }
 
-    const aRemaining = getRemaining(a)
-    const bRemaining = getRemaining(b)
-
-    // Sort descending (highest first)
-    return bRemaining - aRemaining
+    return getRemaining(b) - getRemaining(a)
   })
 
   console.log('\n📊 Quota Overview - All Accounts')
@@ -183,25 +152,18 @@ export function renderAllQuotaTable(results: AllAccountsQuotaResult[], options: 
 
   const totalWidth = process.stdout.columns || 80
 
-  // Calculate responsive widths
-  // Standard: [30, 10, 15, 20] = ~75 content + 13 border = 88 chars
-
   let colWidths: number[] | undefined
 
   if (totalWidth < 80) {
-    // Very small: auto-size or strict truncation
     colWidths = undefined
   } else if (totalWidth < 100) {
-    // Compact mode
-    colWidths = [25, 8, 12, 18]
+    colWidths = [24, 14, 14, 10, 15]
   } else {
-    // Spacious mode (fill remaining space with email column?)
-    // For now keep standard spacious defaults
-    colWidths = [30, 10, 15, 20]
+    colWidths = [30, 16, 16, 12, 16]
   }
 
   const tableOptions: any = {
-    head: ['Account', 'Source', 'Credits', 'Quota Remaining'],
+    head: ['Account', 'Gemini Quota', 'Claude Quota', 'Resets In', 'Status'],
     style: {
       head: ['cyan'],
       border: ['gray']
@@ -213,7 +175,6 @@ export function renderAllQuotaTable(results: AllAccountsQuotaResult[], options: 
   }
 
   const table = new Table(tableOptions)
-
   const errors: string[] = []
 
   for (const result of sortedResults) {
@@ -226,51 +187,84 @@ export function renderAllQuotaTable(results: AllAccountsQuotaResult[], options: 
         nameDisplay,
         '-',
         '-',
+        '-',
         result.error || 'Error'
       ])
       errors.push(`${result.email}: ${result.error}`)
     } else {
       const snapshot = result.snapshot
-      const source = result.status === 'cached'
-        ? `Cached (${formatCacheAge(result.cacheAge)})`
-        : (snapshot?.method.toUpperCase() || '-')
-
-      // Get credits
-      let credits = '-'
-      if (snapshot?.promptCredits) {
-        const pc = snapshot.promptCredits
-        credits = `${pc.available} / ${pc.monthly}`
-      }
-
-      // Show the MINIMUM remaining percentage across relevant models
-      // (This is the most constrained/concerning value for the user)
-      let quotaRemaining = '-'
       const models = snapshot?.models || []
       const relevantModels = options.allModels
         ? models
         : models.filter(m => !m.isAutocompleteOnly)
 
-      if (relevantModels.length > 0) {
-        // Find minimum remaining percentage among relevant models
-        const percentages = relevantModels
+      // Gemini models pool
+      const geminiModels = relevantModels.filter(isGeminiModel)
+      let geminiDisplay = '-'
+      let geminiResetMs: number | undefined
+      if (geminiModels.length > 0) {
+        const geminiPercentages = geminiModels
           .filter(m => m.remainingPercentage !== undefined)
           .map(m => m.remainingPercentage!)
-
-        if (percentages.length > 0) {
-          const minRemaining = Math.min(...percentages)
-          quotaRemaining = formatQuotaRemainingBar(minRemaining * 100)
-        } else if (relevantModels.some(m => m.isExhausted)) {
-          quotaRemaining = '❌ EXHAUSTED'
-        } else {
-          quotaRemaining = formatQuotaRemainingBar(undefined)
+        const minGeminiPct = geminiPercentages.length > 0 ? Math.min(...geminiPercentages) : undefined
+        const isExhausted = geminiModels.some(m => m.isExhausted)
+        geminiResetMs = geminiModels.find(m => m.timeUntilResetMs !== undefined)?.timeUntilResetMs
+        const fakeModel: ModelQuotaInfo = {
+          label: 'Gemini',
+          modelId: 'gemini-all',
+          remainingPercentage: minGeminiPct,
+          isExhausted,
+          timeUntilResetMs: geminiResetMs
         }
+        geminiDisplay = formatRemaining(fakeModel)
       }
+
+      // Claude models pool
+      const claudeModels = relevantModels.filter(m => {
+        const id = m.modelId.toLowerCase()
+        const label = m.label.toLowerCase()
+        return id.includes('claude') || label.includes('claude')
+      })
+      let claudeDisplay = '-'
+      let claudeResetMs: number | undefined
+      if (claudeModels.length > 0) {
+        const claudePercentages = claudeModels
+          .filter(m => m.remainingPercentage !== undefined)
+          .map(m => m.remainingPercentage!)
+        const minClaudePct = claudePercentages.length > 0 ? Math.min(...claudePercentages) : undefined
+        const isExhausted = claudeModels.some(m => m.isExhausted)
+        claudeResetMs = claudeModels.find(m => m.timeUntilResetMs !== undefined)?.timeUntilResetMs
+        const fakeModel: ModelQuotaInfo = {
+          label: 'Claude',
+          modelId: 'claude-all',
+          remainingPercentage: minClaudePct,
+          isExhausted,
+          timeUntilResetMs: claudeResetMs
+        }
+        claudeDisplay = formatRemaining(fakeModel)
+      }
+
+      // Status
+      let statusDisplay = '🟢 Normal'
+      if (relevantModels.some(m => m.timeUntilResetMs && m.timeUntilResetMs > 5.5 * 3600 * 1000)) {
+        const maxReset = Math.max(...relevantModels.filter(m => m.timeUntilResetMs).map(m => m.timeUntilResetMs!))
+        statusDisplay = `❌ Weekly Limit (${formatTimeUntilReset(maxReset)})`
+      } else if (relevantModels.some(m => m.weeklyLimitStatus)) {
+        statusDisplay = relevantModels.find(m => m.weeklyLimitStatus)!.weeklyLimitStatus!
+      } else if (relevantModels.some(m => m.isExhausted)) {
+        statusDisplay = '⚠️ 5h Limit'
+      }
+
+      // Reset time
+      const resetMs = geminiResetMs ?? claudeResetMs ?? relevantModels.find(m => m.timeUntilResetMs !== undefined)?.timeUntilResetMs
+      const resetDisplay = formatTimeUntilReset(resetMs)
 
       table.push([
         nameDisplay,
-        source,
-        credits,
-        quotaRemaining
+        geminiDisplay,
+        claudeDisplay,
+        resetDisplay,
+        statusDisplay
       ])
     }
   }
@@ -286,10 +280,12 @@ export function renderAllQuotaTable(results: AllAccountsQuotaResult[], options: 
   }
 
   console.log('\n[*] = active account')
-  console.log('💡 Use --refresh to fetch latest data\n')
+  console.log('ℹ️  Quota % reflects remaining capacity in the active rolling window (5-hour reset cycle).')
+  console.log('ℹ️  Google enforces an unmetered weekly safety ceiling; if exceeded, status changes to Weekly Limit.')
+  console.log('💡 Run `antigravity-usage -a <email>` for single account details | Use -w to test weekly limits\n')
 }
 
-function formatCacheAge(seconds: number | undefined): string {
+export function formatCacheAge(seconds: number | undefined): string {
   if (seconds === undefined) return '?'
   if (seconds < 60) return `${seconds}s`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
